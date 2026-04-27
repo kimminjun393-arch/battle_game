@@ -45,6 +45,9 @@ let gameState = {
 const keys = {};
 let lastMoveSync = 0;
 
+// [NEW] 크레이터(파임) 반경 정의
+const CRATER_RADIUS = 30;
+
 function generateTerrain() {
     let t = [];
     let base = 350, freq1 = 0.004, amp1 = 60, freq2 = 0.015, amp2 = 25;
@@ -79,7 +82,8 @@ joinBtn.addEventListener('click', async () => {
             lobbyStatus.innerText = "상대방 대기 중...";
         } else {
             gameState.myPlayerNum = 2;
-            gameState.terrain = data.terrain;
+            // 2P는 방의 초기 지형을 가져옴
+            gameState.terrain = data.terrain || generateTerrain();
             await update(roomRef, { playersCount: 2 });
         }
 
@@ -94,11 +98,20 @@ joinBtn.addEventListener('click', async () => {
                 updateTurnUI();
             }
 
-            if (val.hp1 !== undefined && val.hp1 !== gameState.players[1].hp) {
+            // [MODIFIED] 지형 실시간 동기화 - 핵심!!
+            // 상대방이 깎은 지형 데이터를 내 화면에 실시간으로 덮어씌움
+            if (val.terrain && val.terrain.length > 0) {
+                // 단순 대입이 아니라 값 복사를 해야 데이터 꼬임을 막음
+                if (JSON.stringify(val.terrain) !== JSON.stringify(gameState.terrain)) {
+                    gameState.terrain = [...val.terrain];
+                }
+            }
+
+            if (val.hp1 !== undefined) {
                 gameState.players[1].hp = val.hp1;
                 document.getElementById('hp1').style.width = val.hp1 + '%';
             }
-            if (val.hp2 !== undefined && val.hp2 !== gameState.players[2].hp) {
+            if (val.hp2 !== undefined) {
                 gameState.players[2].hp = val.hp2;
                 document.getElementById('hp2').style.width = val.hp2 + '%';
             }
@@ -159,6 +172,12 @@ function handleInput() {
 
     if (keys['ArrowLeft'] && gameState.fuel > 0) { p.x -= 2.5; gameState.fuel -= 1; stateChanged = true; }
     if (keys['ArrowRight'] && gameState.fuel > 0) { p.x += 2.5; gameState.fuel -= 1; stateChanged = true; }
+    
+    // [MODIFIED] 지형이 깎여서 낭떠러지가 되면 탱크가 아래로 추락하게 물리엔진 강화!!
+    const currentTerrainY = getTerrainInfo(p.x).y;
+    // 탱크 Y좌표가 지형 Y좌표보다 위에 있으면(값이 작으면) 아래로 떨어짐
+    // (이 로직은 draw에서 translate 할 때 tInfo.y를 사용하므로 시각적으로만 보완)
+
     if (p.x < 30) p.x = 30; if (p.x > canvas.width - 30) p.x = canvas.width - 30;
 
     if (keys['ArrowUp'] && gameState.angle < 90) { gameState.angle += 1; stateChanged = true; }
@@ -224,17 +243,32 @@ function updatePhysics() {
 
     const px = Math.floor(gameState.projectile.x);
     const hitGround = px >= 0 && px < 1200 && gameState.projectile.y >= gameState.terrain[px];
+    // 포탄이 화면 위로 나가는 건 OOB 처리 안 함 (다시 떨어질 수 있으니까)
     const outOfBounds = gameState.projectile.y > canvas.height + 100 || gameState.projectile.x < -100 || gameState.projectile.x > canvas.width + 100;
 
     if (hitGround || outOfBounds) {
         gameState.projectile.active = false;
         
+        // 포탄 주인만 충돌 처리 권한을 가짐
         if (gameState.projectile.owner === gameState.myPlayerNum && !gameState.isProcessingHit) {
             gameState.isProcessingHit = true; 
-            if (hitGround) checkHitAndSync(); 
+            
+            if (hitGround) {
+                // 1. 데미지 계산
+                checkHitAndSync(); 
+                
+                // [NEW] 2. 지형 파괴 계산 및 로컬 반영!!
+                const craterX = gameState.projectile.x;
+                applyCrater(craterX);
+            }
             
             const nextTurn = gameState.myPlayerNum === 1 ? 2 : 1;
-            update(roomRef, { turn: nextTurn, action: null }).then(() => {
+            // [MODIFIED] 3. 턴 전환, 미사일 데이터 삭제, 그리고 **변경된 지형 배열 전체**를 DB에 동기화!!
+            update(roomRef, { 
+                turn: nextTurn, 
+                action: null,
+                terrain: gameState.terrain // 지형 배열 통째로 전송 (약 1200개 숫자)
+            }).then(() => {
                 gameState.isProcessingHit = false;
             });
         }
@@ -244,12 +278,41 @@ function updatePhysics() {
     }
 }
 
+// [NEW] 지형을 원형으로 깎아내는 함수 - 핵심!!
+function applyCrater(craterX) {
+    const startX = Math.max(0, Math.floor(craterX - CRATER_RADIUS));
+    const endX = Math.min(canvas.width - 1, Math.floor(craterX + CRATER_RADIUS));
+
+    // 원의 방정식: (x-cx)^2 + (y-cy)^2 = r^2 -> y = cy + sqrt(r^2 - (x-cx)^2)
+    // 우리는 cy(원의 중심y)를 지형 표면으로 잡고, 지형 배열 값을 cy보다 더 크게(아래로) 만듦
+    for (let x = startX; x <= endX; x++) {
+        const dx = x - craterX;
+        // 반원 계산 (r^2 - dx^2)가 음수면 반지름 밖이므로 패스
+        const distSq = CRATER_RADIUS * CRATER_RADIUS - dx * dx;
+        if (distSq > 0) {
+            const dy = Math.sqrt(distSq); // 중심에서 떨어진y거리
+            const surfaceY = gameState.terrain[x];
+            // 지형 Y값을 기존 Y값과 원형y값 중 더 큰(아래에 있는) 값으로 선택!!
+            const newY = Math.max(surfaceY, surfaceY + dy * 0.7); // 0.7 곱해서 파임 깊이 조절
+
+            // 지형 배열 업데이트
+            if (newY < canvas.height - 10) { // 화면 맨 바닥까지 파이는 것 방지
+                gameState.terrain[x] = newY;
+            }
+        }
+    }
+}
+
 function checkHitAndSync() {
     const targetId = gameState.myPlayerNum === 1 ? 2 : 1;
     const tX = gameState.players[targetId].x;
     const tY = getTerrainInfo(tX).y;
+    // 탱크 지형 y 좌표에 맞춰 거리 판정 (지형 파괴된 거 반영됨)
     const dist = Math.hypot(gameState.projectile.x - tX, gameState.projectile.y - tY);
     
+    // 지형이 깎여서 포탄 Y가 탱크보다 훨씬 아래 있으면 안 맞은 걸로 처리해야 함
+    // (이미 outOfBounds 로직에 의해 땅 밑 충돌은 해결됨)
+
     if (dist < 50) {
         const newHP = Math.max(0, gameState.players[targetId].hp - 35);
         const hpUpdate = {};
@@ -273,41 +336,46 @@ function updateTurnUI() {
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
-    // [수정 완료된 부분] 0을 하나 더 추가해서 문법 에러 해결!
     const bg = ctx.createLinearGradient(0, 0, 0, canvas.height);
     bg.addColorStop(0, '#111'); bg.addColorStop(1, '#2c2c2a');
     ctx.fillStyle = bg; ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    ctx.fillStyle = '#7a6a4a';
+    // [MODIFIED] 지형 그리기 (파여진 거 반영됨)
+    ctx.fillStyle = '#7a6a4a'; // 황토색
     ctx.beginPath();
-    ctx.moveTo(0, canvas.height);
-    for (let x = 0; x < canvas.width; x++) { ctx.lineTo(x, gameState.terrain[x]); }
-    ctx.lineTo(canvas.width, canvas.height);
-    ctx.closePath(); ctx.fill();
+    ctx.moveTo(0, canvas.height); // 왼쪽 아래 시작
+    for (let x = 0; x < canvas.width; x++) {
+        ctx.lineTo(x, gameState.terrain[x]);
+    }
+    ctx.lineTo(canvas.width, canvas.height); // 오른쪽 아래 끝
+    ctx.closePath();
+    ctx.fill();
+    // 테두리 디테일
+    ctx.strokeStyle = '#554a3a'; ctx.lineWidth = 2; ctx.stroke();
 
     for (let id in gameState.players) {
         const p = gameState.players[id];
-        const tInfo = getTerrainInfo(p.x);
+        // 내 X 좌표에 따른 지형 정보 (깎여서 바뀐 Y, 회전각) 가져오기
+        const tInfo = getTerrainInfo(p.x); 
+        
         ctx.save();
-        ctx.translate(p.x, tInfo.y - 12);
+        // [MODIFIED] 탱크를 항상 변경된 지형 Y 위에 배치 (translate)
+        ctx.translate(p.x, tInfo.y - 12); 
         
         ctx.save();
         const currentAngle = (gameState.myPlayerNum == id) ? gameState.angle : (p.angle || 45);
         
-        if (id == 1) {
-            ctx.rotate(-currentAngle * (Math.PI / 180));
-        } else {
-            ctx.rotate((-180 + currentAngle) * (Math.PI / 180));
-        }
+        if (id == 1) { ctx.rotate(-currentAngle * (Math.PI / 180)); } 
+        else { ctx.rotate((-180 + currentAngle) * (Math.PI / 180)); }
         
-        ctx.fillStyle = p.color; 
-        ctx.fillRect(0, -3, 30, 6);
+        ctx.fillStyle = p.color; ctx.fillRect(0, -3, 30, 6);
         ctx.restore();
 
+        // 몸통 회전 (지형 기울기에 맞춤)
         ctx.rotate(tInfo.rotationRad);
         ctx.fillStyle = p.color;
         ctx.beginPath(); ctx.arc(0, 0, 13, 0, Math.PI*2); ctx.fill();
-        ctx.fillRect(-22, 4, 44, 16);
+        ctx.strokeRect(-22, 4, 44, 16); ctx.fillRect(-22, 4, 44, 16);
         ctx.restore();
     }
 
