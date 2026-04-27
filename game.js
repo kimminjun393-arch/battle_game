@@ -17,7 +17,7 @@ const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 let roomRef = null;
 
-// 2. 게임 상태
+// 2. 게임 상태 및 DOM 요소
 const lobbyContainer = document.getElementById('lobby-container');
 const gameContainer = document.getElementById('game-container');
 const joinBtn = document.getElementById('join-btn');
@@ -31,6 +31,8 @@ let gameState = {
     myPlayerNum: 1, 
     angle: 45,
     power: 0,
+    powerDir: 1,       // 파워 증가(1) or 감소(-1) 방향
+    powerSpeed: 1.5,   // 파워가 변하는 기본 속도
     isCharging: false,
     isGameStarted: false,
     players: {
@@ -88,7 +90,7 @@ function startGame() {
     gameLoop();
 }
 
-// 4. 컨트롤
+// 4. 입력 및 조작
 window.addEventListener('keydown', (e) => keys[e.code] = true);
 window.addEventListener('keyup', (e) => {
     if (e.code === 'Space' && gameState.isCharging) sendFireAction();
@@ -97,16 +99,29 @@ window.addEventListener('keyup', (e) => {
 
 function handleInput() {
     if (gameState.turn !== gameState.myPlayerNum || gameState.projectile.active) return;
+    
+    // [위/아래 방향키]로 포신 각도 조절!
     if (keys['ArrowUp'] && gameState.angle < 90) gameState.angle += 1;
     if (keys['ArrowDown'] && gameState.angle > 0) gameState.angle -= 1;
+    
+    // [스페이스바] 파워 핑퐁 & 가속 시스템
     if (keys['Space']) {
         gameState.isCharging = true;
-        if (gameState.power < 100) gameState.power += 1.2;
+        gameState.power += gameState.powerSpeed * gameState.powerDir;
+        gameState.powerSpeed += 0.04; // 누르고 있을수록 점점 미친듯이 빨라짐!
+
+        if (gameState.power >= 100) {
+            gameState.power = 100;
+            gameState.powerDir = -1; // 100 찍으면 감소 시작
+        } else if (gameState.power <= 0) {
+            gameState.power = 0;
+            gameState.powerDir = 1; // 0 찍으면 다시 증가 시작
+        }
     }
     document.getElementById('status').innerText = `ANGLE: ${gameState.angle}° | POWER: ${Math.floor(gameState.power)}`;
 }
 
-// 5. 물리 & 동기화
+// 5. 물리 엔진 및 동기화
 function sendFireAction() {
     const radian = gameState.angle * (Math.PI / 180);
     const dir = gameState.turn === 1 ? 1 : -1;
@@ -120,8 +135,12 @@ function sendFireAction() {
     };
     update(roomRef, { action: actionData });
     executeFire(actionData);
+    
+    // 파워 시스템 초기화
     gameState.isCharging = false;
     gameState.power = 0;
+    gameState.powerDir = 1;
+    gameState.powerSpeed = 1.5;
 }
 
 function executeFire(data) {
@@ -163,11 +182,11 @@ function updateTurnUI() {
     el.style.color = isMyTurn ? "#f1c40f" : "#475569";
 }
 
-// 6. 그래픽 (STELLAR STRIKE 전용 디자인)
+// 6. 그래픽 및 렌더링
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // 배경 그라데이션
+    // 배경
     const bg = ctx.createLinearGradient(0, 0, 0, canvas.height);
     bg.addColorStop(0, '#0f172a'); bg.addColorStop(1, '#1e293b');
     ctx.fillStyle = bg; ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -175,13 +194,12 @@ function draw() {
     // 지면
     ctx.fillStyle = '#334155'; ctx.fillRect(0, 470, canvas.width, 30);
 
-    // 탱크 그리기
+    // 탱크
     for (let id in gameState.players) {
         const p = gameState.players[id];
         ctx.save();
         ctx.translate(p.x, p.y - 15);
         
-        // 포신
         ctx.save();
         const dir = (id == 1) ? 1 : -1;
         const currentAngle = (gameState.turn == id) ? gameState.angle : 45;
@@ -190,10 +208,9 @@ function draw() {
         ctx.fillRect(0, -4, 35, 8);
         ctx.restore();
 
-        // 몸통
         ctx.fillStyle = p.color;
-        ctx.beginPath(); ctx.arc(0, 0, 15, 0, Math.PI*2); ctx.fill(); // 터릿
-        ctx.fillRect(-25, 5, 50, 20); // 바디
+        ctx.beginPath(); ctx.arc(0, 0, 15, 0, Math.PI*2); ctx.fill();
+        ctx.fillRect(-25, 5, 50, 20);
         ctx.restore();
     }
 
@@ -201,9 +218,31 @@ function draw() {
     if (gameState.projectile.active) {
         ctx.fillStyle = '#f1c40f';
         ctx.beginPath(); ctx.arc(gameState.projectile.x, gameState.projectile.y, 5, 0, Math.PI*2); ctx.fill();
-        // 잔상 효과 (심플)
         ctx.shadowBlur = 10; ctx.shadowColor = "#f1c40f";
     } else { ctx.shadowBlur = 0; }
+
+    // [NEW] 중앙 상단 파워 게이지 바 렌더링 (스페이스바 누를 때만 보임)
+    if (gameState.isCharging && gameState.turn === gameState.myPlayerNum) {
+        const barWidth = 300;
+        const barHeight = 20;
+        const barX = (canvas.width - barWidth) / 2;
+        const barY = 30;
+
+        // 게이지 배경
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+        ctx.fillRect(barX, barY, barWidth, barHeight);
+        
+        // 게이지 채우기 (파워에 따라 색상 변화: 노랑 -> 빨강)
+        const redColor = Math.min(255, gameState.power * 2.5);
+        const greenColor = Math.max(0, 255 - gameState.power * 2.5);
+        ctx.fillStyle = `rgb(255, ${greenColor}, 0)`;
+        ctx.fillRect(barX, barY, (gameState.power / 100) * barWidth, barHeight);
+        
+        // 게이지 테두리
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(barX, barY, barWidth, barHeight);
+    }
 }
 
 function gameLoop() {
