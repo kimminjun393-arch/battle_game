@@ -5,12 +5,12 @@ body {
     font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     display: flex;
     justify-content: center;
-    /* 화면 세로 중앙 정렬을 풀고 위에서부터 시작하도록 변경 */
-    align-items: flex-start;
-    padding-top: 50px; 
-    min-height: 100vh;
-    /* 맵이 길어졌으므로 가로 스크롤 허용 */
-    overflow: auto; 
+    /* 다시 화면 세로 정중앙 정렬로 복구! */
+    align-items: center; 
+    /* 높이도 다시 화면 꽉 차게 복구 */
+    height: 100vh; 
+    /* 거슬리는 스크롤바 숨김 */
+    overflow: hidden; 
 }
 
 #game-container, #lobby-container {
@@ -44,7 +44,6 @@ h1 {
 #join-btn:hover { transform: translateY(-3px); box-shadow: 0 10px 20px rgba(233, 69, 96, 0.4); }
 #join-btn:disabled { background: #475569; cursor: not-allowed; transform: none; }
 
-/* UI 넓이를 캔버스에 맞게 1200px로 확장 */
 #ui {
     width: 1200px; display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 20px;
 }
