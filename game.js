@@ -359,35 +359,36 @@ function draw() {
         ctx.restore();
     }
 
-    // [NEW] 궤적(포물선) 그리기 - 스페이스바 누르고 있을 때만!
-    if (gameState.isCharging && gameState.turn === gameState.myPlayerNum) {
+    // [MODIFIED] 내 턴이면 항상 궤적을 그리도록 변경
+    if (gameState.turn === gameState.myPlayerNum && !gameState.projectile.active) {
         const currentWeaponInfo = WEAPONS[gameState.selectedWeapon];
         const radian = gameState.angle * (Math.PI / 180);
         const dir = gameState.myPlayerNum === 1 ? 1 : -1;
         const pX = gameState.players[gameState.myPlayerNum].x;
         const tInfo = getTerrainInfo(pX);
 
+        // 기 모으는 중이면 '현재 파워', 아니면 '무기 최대 파워'로 미리보기
+        const simPower = gameState.isCharging ? gameState.power : currentWeaponInfo.maxPower;
+
         let simX = pX;
         let simY = tInfo.y - 35;
-        let simVx = Math.cos(radian) * (gameState.power * 0.25) * dir;
-        let simVy = -Math.sin(radian) * (gameState.power * 0.25);
+        let simVx = Math.cos(radian) * (simPower * 0.25) * dir;
+        let simVy = -Math.sin(radian) * (simPower * 0.25);
 
         ctx.save();
         ctx.beginPath();
         ctx.moveTo(simX, simY);
-        // 반투명 흰색 점선 설정
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+        // 충전 중일 때는 밝고 선명하게, 대기 중일 때는 반투명하게 표시
+        ctx.strokeStyle = gameState.isCharging ? 'rgba(255, 255, 255, 0.8)' : 'rgba(255, 255, 255, 0.25)';
         ctx.lineWidth = 2;
-        ctx.setLineDash([8, 12]); // 점선 길이와 간격 설정
+        ctx.setLineDash([8, 12]);
 
-        // 최대 150틱(약 2.5초치) 시뮬레이션
         for (let i = 0; i < 150; i++) {
             simX += simVx;
             simVy += currentWeaponInfo.gravity;
             simY += simVy;
             ctx.lineTo(simX, simY);
             
-            // 지형에 충돌하거나 화면 밖으로 나가면 그리기 중단
             const checkX = Math.floor(simX);
             if (checkX >= 0 && checkX < canvas.width && simY >= gameState.terrain[checkX]) break;
             if (simY > canvas.height) break;
@@ -402,7 +403,6 @@ function draw() {
         ctx.beginPath(); ctx.arc(gameState.projectile.x, gameState.projectile.y, 6, 0, Math.PI*2); ctx.fill();
     }
 
-    // 무기 UI 패널
     ctx.save();
     ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
     ctx.fillRect(20, 20, 230, 130);
@@ -438,7 +438,6 @@ function draw() {
         
         ctx.font = '11px sans-serif';
         ctx.fillStyle = isSelected ? '#dddddd' : '#777777';
-        // [MODIFIED] EXP 대신 '사거리'로 텍스트 변경
         ctx.fillText(`ATK:${wInfo.dmg} | 사거리:${wInfo.maxPower}`, 135, yPos);
     });
     ctx.restore();
