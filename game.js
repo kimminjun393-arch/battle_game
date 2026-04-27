@@ -36,10 +36,11 @@ let gameState = {
         1: { x: 150, hp: 100, color: '#3498db' },
         2: { x: 1050, hp: 100, color: '#e74c3c' }
     },
-    projectile: { x: 0, y: 0, vx: 0, vy: 0, active: false },
+    // [핵심] owner 변수를 추가해서 이 포탄을 누가 쐈는지 기록함
+    projectile: { x: 0, y: 0, vx: 0, vy: 0, active: false, owner: 0 },
     terrain: [],
     lastActionId: 0,
-    isProcessingHit: false // [NEW] 충돌 처리 중 중복 방지 플래그
+    isProcessingHit: false 
 };
 
 const keys = {};
@@ -72,11 +73,7 @@ joinBtn.addEventListener('click', async () => {
             gameState.myPlayerNum = 1;
             const t = generateTerrain();
             await set(roomRef, { 
-                playersCount: 1, 
-                terrain: t, 
-                turn: 1, 
-                action: null,
-                hp1: 100, hp2: 100 // HP 초기화
+                playersCount: 1, terrain: t, turn: 1, action: null, hp1: 100, hp2: 100 
             });
             gameState.terrain = t;
             onDisconnect(roomRef).remove();
@@ -87,30 +84,26 @@ joinBtn.addEventListener('click', async () => {
             await update(roomRef, { playersCount: 2 });
         }
 
-        // 통합 리스너: DB의 변화를 내 로컬 상태에 동기화
         onValue(roomRef, (snap) => {
             const val = snap.val();
             if (!val) return;
             
             if (val.playersCount === 2 && !gameState.isGameStarted) startGame();
             
-            // 1. 턴 동기화
-            if (val.turn !== undefined) {
+            if (val.turn !== undefined && val.turn !== gameState.turn) {
                 gameState.turn = val.turn;
                 updateTurnUI();
             }
 
-            // 2. HP 동기화
-            if (val.hp1 !== undefined) {
+            if (val.hp1 !== undefined && val.hp1 !== gameState.players[1].hp) {
                 gameState.players[1].hp = val.hp1;
                 document.getElementById('hp1').style.width = val.hp1 + '%';
             }
-            if (val.hp2 !== undefined) {
+            if (val.hp2 !== undefined && val.hp2 !== gameState.players[2].hp) {
                 gameState.players[2].hp = val.hp2;
                 document.getElementById('hp2').style.width = val.hp2 + '%';
             }
             
-            // 3. 미사일 발사 동기화
             if (val.action && val.action.id !== gameState.lastActionId) {
                 if (val.action.player !== gameState.myPlayerNum) {
                     gameState.lastActionId = val.action.id;
@@ -118,7 +111,6 @@ joinBtn.addEventListener('click', async () => {
                 }
             }
         });
-
     } catch (e) { console.error(e); }
 });
 
@@ -127,7 +119,6 @@ function startGame() {
     lobbyContainer.style.display = 'none';
     gameContainer.style.display = 'flex';
     
-    // 상대방 X 위치만 따로 감시 (성능 최적화)
     const otherPlayerNum = gameState.myPlayerNum === 1 ? 2 : 1;
     onValue(ref(db, `rooms/${currentRoomCode}/players/${otherPlayerNum}/x`), (snap) => {
         if (snap.exists()) gameState.players[otherPlayerNum].x = snap.val();
@@ -158,7 +149,6 @@ function getTerrainInfo(x) {
 }
 
 function handleInput() {
-    // 발사 중이거나 내 턴이 아니면 아무것도 못함
     if (gameState.turn !== gameState.myPlayerNum || gameState.projectile.active) return;
     
     const p = gameState.players[gameState.myPlayerNum];
@@ -171,7 +161,6 @@ function handleInput() {
     if (moved) {
         const now = Date.now();
         if (now - lastMoveSync > 50) {
-            // 중요: X 좌표만 업데이트 (턴 정보를 건드리지 않음)
             update(ref(db, `rooms/${currentRoomCode}/players/${gameState.myPlayerNum}`), { x: p.x });
             lastMoveSync = now;
         }
@@ -208,13 +197,16 @@ function sendFireAction() {
     };
     
     gameState.lastActionId = actionId;
-    gameState.isProcessingHit = false; // 발사 시 플래그 초기화
+    gameState.isProcessingHit = false; 
     update(roomRef, { action: actionData });
     executeFire(actionData);
 }
 
 function executeFire(data) {
-    gameState.projectile = { x: data.startX, y: data.startY, vx: data.vx, vy: data.vy, active: true };
+    gameState.projectile = { 
+        x: data.startX, y: data.startY, vx: data.vx, vy: data.vy, active: true, 
+        owner: data.player // [핵심] 이 포탄을 누가 쐈는지 명확하게 꼬리표를 붙임
+    };
 }
 
 function updatePhysics() {
@@ -231,18 +223,15 @@ function updatePhysics() {
     if (hitGround || outOfBounds) {
         gameState.projectile.active = false;
         
-        // [핵심] 턴을 넘기는 권한은 오직 미사일을 쏜 사람에게만 있음
-        if (gameState.turn === gameState.myPlayerNum && !gameState.isProcessingHit) {
-            gameState.isProcessingHit = true; // 중복 실행 방지
+        // [핵심] 현재 턴이 내 턴인지 확인하는 게 아니라, '이 미사일을 쏜 사람이 나인지' 확인!!
+        // 이렇게 해야 2번 컴퓨터가 1번의 미사일을 맞고 멋대로 턴을 1번으로 되돌려버리는 버그가 사라짐
+        if (gameState.projectile.owner === gameState.myPlayerNum && !gameState.isProcessingHit) {
+            gameState.isProcessingHit = true; 
             
-            if (hitGround) checkHitAndSync(); // 데미지 계산 및 DB 동기화
+            if (hitGround) checkHitAndSync(); 
             
-            const nextTurn = gameState.turn === 1 ? 2 : 1;
-            // 턴 전환과 미사일 데이터 삭제를 동시에 수행
-            update(roomRef, { 
-                turn: nextTurn, 
-                action: null 
-            }).then(() => {
+            const nextTurn = gameState.myPlayerNum === 1 ? 2 : 1;
+            update(roomRef, { turn: nextTurn, action: null }).then(() => {
                 gameState.isProcessingHit = false;
             });
         }
@@ -252,9 +241,9 @@ function updatePhysics() {
     }
 }
 
-// 쏜 사람이 상대방의 HP를 계산해서 DB에 올림 (전체 동기화)
 function checkHitAndSync() {
-    const targetId = gameState.turn === 1 ? 2 : 1;
+    // 맞을 대상은 언제나 '나'가 아닌 상대방
+    const targetId = gameState.myPlayerNum === 1 ? 2 : 1;
     const tX = gameState.players[targetId].x;
     const tY = getTerrainInfo(tX).y;
     const dist = Math.hypot(gameState.projectile.x - tX, gameState.projectile.y - tY);
@@ -263,10 +252,10 @@ function checkHitAndSync() {
         const newHP = Math.max(0, gameState.players[targetId].hp - 35);
         const hpUpdate = {};
         hpUpdate[`hp${targetId}`] = newHP;
-        update(roomRef, hpUpdate); // DB에 깎인 HP 반영
+        update(roomRef, hpUpdate);
 
         if (newHP <= 0) {
-            alert(`PLAYER ${gameState.turn} WIN!`);
+            alert(`PLAYER ${gameState.myPlayerNum} WIN!`);
             location.reload();
         }
     }
@@ -285,7 +274,6 @@ function draw() {
     bg.addColorStop(0, '#111'); bg.addColorStop(1, '#2c2c2a');
     ctx.fillStyle = bg; ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // 지형
     ctx.fillStyle = '#7a6a4a';
     ctx.beginPath();
     ctx.moveTo(0, canvas.height);
@@ -293,23 +281,19 @@ function draw() {
     ctx.lineTo(canvas.width, canvas.height);
     ctx.closePath(); ctx.fill();
 
-    // 탱크들
     for (let id in gameState.players) {
         const p = gameState.players[id];
         const tInfo = getTerrainInfo(p.x);
         ctx.save();
         ctx.translate(p.x, tInfo.y - 12);
         
-        // 포신
         ctx.save();
         const dir = (id == 1) ? 1 : -1;
-        // 내 탱크면 내가 조절하는 각도, 상대 탱크면 45도 고정 (또는 상대 각도 동기화 추가 가능)
         const currentAngle = (gameState.myPlayerNum == id) ? gameState.angle : 45;
         ctx.rotate(-currentAngle * (Math.PI / 180) * dir);
         ctx.fillStyle = p.color; ctx.fillRect(0, -3, 30, 6);
         ctx.restore();
 
-        // 몸통
         ctx.rotate(tInfo.rotationRad);
         ctx.fillStyle = p.color;
         ctx.beginPath(); ctx.arc(0, 0, 13, 0, Math.PI*2); ctx.fill();
