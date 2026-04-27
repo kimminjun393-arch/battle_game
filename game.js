@@ -33,10 +33,10 @@ let gameState = {
     fuel: 100,
     isCharging: false, isGameStarted: false,
     players: {
-        1: { x: 150, hp: 100, color: '#3498db' },
-        2: { x: 1050, hp: 100, color: '#e74c3c' }
+        // [수정] 상대방 각도 동기화를 위해 angle 값 추가
+        1: { x: 150, hp: 100, color: '#3498db', angle: 45 },
+        2: { x: 1050, hp: 100, color: '#e74c3c', angle: 45 }
     },
-    // [핵심] owner 변수를 추가해서 이 포탄을 누가 쐈는지 기록함
     projectile: { x: 0, y: 0, vx: 0, vy: 0, active: false, owner: 0 },
     terrain: [],
     lastActionId: 0,
@@ -119,9 +119,14 @@ function startGame() {
     lobbyContainer.style.display = 'none';
     gameContainer.style.display = 'flex';
     
+    // [수정] 상대방의 x 좌표뿐만 아니라 각도(angle)도 실시간으로 가져옴
     const otherPlayerNum = gameState.myPlayerNum === 1 ? 2 : 1;
-    onValue(ref(db, `rooms/${currentRoomCode}/players/${otherPlayerNum}/x`), (snap) => {
-        if (snap.exists()) gameState.players[otherPlayerNum].x = snap.val();
+    onValue(ref(db, `rooms/${currentRoomCode}/players/${otherPlayerNum}`), (snap) => {
+        if (snap.exists()) {
+            const data = snap.val();
+            if (data.x !== undefined) gameState.players[otherPlayerNum].x = data.x;
+            if (data.angle !== undefined) gameState.players[otherPlayerNum].angle = data.angle;
+        }
     });
     updateTurnUI();
     gameLoop();
@@ -152,23 +157,27 @@ function handleInput() {
     if (gameState.turn !== gameState.myPlayerNum || gameState.projectile.active) return;
     
     const p = gameState.players[gameState.myPlayerNum];
-    let moved = false;
+    let stateChanged = false;
 
-    if (keys['ArrowLeft'] && gameState.fuel > 0) { p.x -= 2.5; gameState.fuel -= 1; moved = true; }
-    if (keys['ArrowRight'] && gameState.fuel > 0) { p.x += 2.5; gameState.fuel -= 1; moved = true; }
+    if (keys['ArrowLeft'] && gameState.fuel > 0) { p.x -= 2.5; gameState.fuel -= 1; stateChanged = true; }
+    if (keys['ArrowRight'] && gameState.fuel > 0) { p.x += 2.5; gameState.fuel -= 1; stateChanged = true; }
     if (p.x < 30) p.x = 30; if (p.x > canvas.width - 30) p.x = canvas.width - 30;
 
-    if (moved) {
+    if (keys['ArrowUp'] && gameState.angle < 90) { gameState.angle += 1; stateChanged = true; }
+    if (keys['ArrowDown'] && gameState.angle > 0) { gameState.angle -= 1; stateChanged = true; }
+    
+    // [수정] 이동하거나 각도를 바꿀 때마다 DB에 동기화
+    if (stateChanged) {
         const now = Date.now();
         if (now - lastMoveSync > 50) {
-            update(ref(db, `rooms/${currentRoomCode}/players/${gameState.myPlayerNum}`), { x: p.x });
+            update(ref(db, `rooms/${currentRoomCode}/players/${gameState.myPlayerNum}`), { 
+                x: p.x,
+                angle: gameState.angle
+            });
             lastMoveSync = now;
         }
     }
 
-    if (keys['ArrowUp'] && gameState.angle < 90) gameState.angle += 1;
-    if (keys['ArrowDown'] && gameState.angle > 0) gameState.angle -= 1;
-    
     if (keys['Space']) {
         gameState.isCharging = true;
         gameState.power += gameState.powerSpeed * gameState.powerDir;
@@ -205,7 +214,7 @@ function sendFireAction() {
 function executeFire(data) {
     gameState.projectile = { 
         x: data.startX, y: data.startY, vx: data.vx, vy: data.vy, active: true, 
-        owner: data.player // [핵심] 이 포탄을 누가 쐈는지 명확하게 꼬리표를 붙임
+        owner: data.player 
     };
 }
 
@@ -223,11 +232,8 @@ function updatePhysics() {
     if (hitGround || outOfBounds) {
         gameState.projectile.active = false;
         
-        // [핵심] 현재 턴이 내 턴인지 확인하는 게 아니라, '이 미사일을 쏜 사람이 나인지' 확인!!
-        // 이렇게 해야 2번 컴퓨터가 1번의 미사일을 맞고 멋대로 턴을 1번으로 되돌려버리는 버그가 사라짐
         if (gameState.projectile.owner === gameState.myPlayerNum && !gameState.isProcessingHit) {
             gameState.isProcessingHit = true; 
-            
             if (hitGround) checkHitAndSync(); 
             
             const nextTurn = gameState.myPlayerNum === 1 ? 2 : 1;
@@ -242,7 +248,6 @@ function updatePhysics() {
 }
 
 function checkHitAndSync() {
-    // 맞을 대상은 언제나 '나'가 아닌 상대방
     const targetId = gameState.myPlayerNum === 1 ? 2 : 1;
     const tX = gameState.players[targetId].x;
     const tY = getTerrainInfo(tX).y;
@@ -270,7 +275,7 @@ function updateTurnUI() {
 
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    const bg = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    const bg = ctx.createLinearGradient(0, 0, canvas.height);
     bg.addColorStop(0, '#111'); bg.addColorStop(1, '#2c2c2a');
     ctx.fillStyle = bg; ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -287,13 +292,24 @@ function draw() {
         ctx.save();
         ctx.translate(p.x, tInfo.y - 12);
         
+        // --- [수정] 포신 회전 로직 완벽 개선 ---
         ctx.save();
-        const dir = (id == 1) ? 1 : -1;
-        const currentAngle = (gameState.myPlayerNum == id) ? gameState.angle : 45;
-        ctx.rotate(-currentAngle * (Math.PI / 180) * dir);
-        ctx.fillStyle = p.color; ctx.fillRect(0, -3, 30, 6);
+        // 내가 움직이는 탱크면 내 각도를, 상대방이면 서버에 저장된 상대방 각도를 가져옴
+        const currentAngle = (gameState.myPlayerNum == id) ? gameState.angle : (p.angle || 45);
+        
+        if (id == 1) {
+            // 1번(파랑)은 0도를 기준으로 위쪽(-방향)으로 꺾음
+            ctx.rotate(-currentAngle * (Math.PI / 180));
+        } else {
+            // 2번(빨강)은 180도(왼쪽)를 기준으로 위쪽(+방향)으로 꺾음
+            ctx.rotate((-180 + currentAngle) * (Math.PI / 180));
+        }
+        
+        ctx.fillStyle = p.color; 
+        ctx.fillRect(0, -3, 30, 6);
         ctx.restore();
 
+        // 몸통
         ctx.rotate(tInfo.rotationRad);
         ctx.fillStyle = p.color;
         ctx.beginPath(); ctx.arc(0, 0, 13, 0, Math.PI*2); ctx.fill();
