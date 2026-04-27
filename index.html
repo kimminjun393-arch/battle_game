@@ -1,39 +1,41 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>STELLAR STRIKE - Online Artillery</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>STELLAR STRIKE - Online Artillery</title>
+    <link rel="stylesheet" href="style.css?v=16">
     <link rel="stylesheet" href="style.css?v=17">
 </head>
 <body>
-    <div id="lobby-container">
-        <h1>STELLAR STRIKE</h1>
-        <div class="lobby-box">
-            <input type="text" id="room-code" placeholder="ENTER ROOM CODE (ex: 7777)">
-            <button id="join-btn">JOIN / CREATE ROOM</button>
-            <div id="lobby-status">친구와 같은 코드를 입력하고 접속하세요.</div>
-        </div>
-    </div>
+<div id="lobby-container">
+<h1>STELLAR STRIKE</h1>
+<div class="lobby-box">
+<input type="text" id="room-code" placeholder="ENTER ROOM CODE (ex: 7777)">
+<button id="join-btn">JOIN / CREATE ROOM</button>
+<div id="lobby-status">친구와 같은 코드를 입력하고 접속하세요.</div>
+</div>
+</div>
 
-    <div id="game-container" style="display: none;">
-        <div id="ui">
-            <div class="player-info">
-                <div class="p-label">PLAYER 1 (BLUE)</div>
-                <div class="hp-bar"><div id="hp1" class="hp-fill"></div></div>
-            </div>
-            <div class="status-board">
-                <div id="turn-display">READY...</div>
-                <div id="status">ANGLE: 45° | POWER: 0 | FUEL: 100</div>
-            </div>
-            <div class="player-info">
-                <div class="p-label">PLAYER 2 (RED)</div>
-                <div class="hp-bar"><div id="hp2" class="hp-fill"></div></div>
-            </div>
-        </div>
-        <canvas id="gameCanvas" width="1200" height="500"></canvas>
-    </div>
+<div id="game-container" style="display: none;">
+<div id="ui">
+<div class="player-info">
+<div class="p-label">PLAYER 1 (BLUE)</div>
+<div class="hp-bar"><div id="hp1" class="hp-fill"></div></div>
+</div>
+<div class="status-board">
+<div id="turn-display">READY...</div>
+<div id="status">ANGLE: 45° | POWER: 0 | FUEL: 100</div>
+</div>
+<div class="player-info">
+<div class="p-label">PLAYER 2 (RED)</div>
+<div class="hp-bar"><div id="hp2" class="hp-fill"></div></div>
+</div>
+</div>
+<canvas id="gameCanvas" width="1200" height="500"></canvas>
+</div>
 
+    <script type="module" src="game.js?v=16"></script>
     <script type="module" src="game.js?v=17"></script>
 </body>
 </html>
