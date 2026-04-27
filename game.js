@@ -25,11 +25,11 @@ const lobbyStatus = document.getElementById('lobby-status');
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-// [밸런스 패치] 클래스별 능력치
+// 클래스별 능력치 (Heavy Man의 사거리를 0.5로 대폭 하향)
 const TANK_TYPES = {
     'balanced': { name: 'Basic', maxHp: 300, maxFuel: 100, speed: 2.5, powerSpeedInc: 0.05, rangeMult: 1.0, dmgMult: 1.0 },
-    'heavy':    { name: 'Heavy Man', maxHp: 450, maxFuel: 50, speed: 1.2, powerSpeedInc: 0.02, rangeMult: 0.7, dmgMult: 1.5 }, // 사거리 짧음, 데미지 강함
-    'light':    { name: 'Speedy', maxHp: 200, maxFuel: 200, speed: 4.0, powerSpeedInc: 0.1, rangeMult: 1.4, dmgMult: 0.8 }   // 사거리 김, 데미지 약함
+    'heavy':    { name: 'Heavy Man', maxHp: 450, maxFuel: 50, speed: 1.2, powerSpeedInc: 0.02, rangeMult: 0.5, dmgMult: 1.8 },
+    'light':    { name: 'Speedy', maxHp: 200, maxFuel: 200, speed: 4.0, powerSpeedInc: 0.1, rangeMult: 1.4, dmgMult: 0.8 }
 };
 
 const WEAPONS = {
@@ -116,7 +116,7 @@ function updateHP(num, hp) {
     if (hpEl) {
         hpEl.style.width = Math.max(0, (hp / maxHp * 100)) + '%';
         hpEl.innerText = `${Math.floor(hp)} / ${maxHp}`;
-        hpEl.style.textAlign = 'center'; hpEl.style.lineHeight = '25px'; hpEl.style.fontSize = '12px';
+        hpEl.style.textAlign = 'center'; hpEl.style.lineHeight = '25px'; hpEl.style.fontSize = '12px'; hpEl.style.color = 'white';
     }
 }
 
@@ -182,7 +182,7 @@ function handleInput() {
         gameState.isCharging = true;
         gameState.power += gameState.powerSpeed * gameState.powerDir;
         gameState.powerSpeed += stats.powerSpeedInc; 
-        const maxRange = wInfo.baseMaxPower * stats.rangeMult; // 클래스별 사거리 적용
+        const maxRange = wInfo.baseMaxPower * stats.rangeMult; 
         if (gameState.power >= maxRange) { gameState.power = maxRange; gameState.powerDir = -1; }
         else if (gameState.power <= 0) { gameState.power = 0; gameState.powerDir = 1; }
     }
@@ -245,7 +245,7 @@ function checkHitAndSync() {
     for (let i = 1; i <= 2; i++) {
         const p = gameState.players[i];
         if (Math.hypot(gameState.projectile.x - p.x, gameState.projectile.y - getTerrainInfo(p.x).y) < wInfo.crater + 20) {
-            let dmg = wInfo.dmg * attackerStats.dmgMult; // 클래스별 데미지 배율 적용
+            let dmg = wInfo.dmg * attackerStats.dmgMult; 
             if (i === gameState.projectile.owner) dmg *= 0.5;
             updates[`hp${i}`] = Math.max(0, p.hp - dmg);
         }
@@ -300,7 +300,8 @@ function draw() {
         ctx.beginPath(); ctx.strokeStyle = w.color; ctx.setLineDash([5, 5]);
         for (let i = 0; i < 100; i++) {
             sx += svx; svy += w.gravity; sy += svy; ctx.lineTo(sx, sy);
-            if (sx < 0 || sx > 1200 || sy > gameState.terrain[Math.floor(sx)]) break;
+            const ix = Math.floor(sx);
+            if (ix < 0 || ix >= 1200 || sy > gameState.terrain[ix]) break;
         }
         ctx.stroke(); ctx.setLineDash([]);
     }
