@@ -8,8 +8,8 @@
         body { margin: 0; padding: 0; background-color: #1a1a1a; color: white; font-family: 'Pretendard', sans-serif; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; }
         #lobby-container { display: flex; flex-direction: column; align-items: center; background: #2a2a2a; padding: 40px; border-radius: 15px; box-shadow: 0 0 30px rgba(0,0,0,0.5); border: 2px solid #444; }
         h1 { color: #f1c40f; font-size: 36px; margin-bottom: 30px; text-shadow: 2px 2px 5px rgba(0,0,0,0.5); }
-        #tank-select, #room-code { width: 280px; padding: 12px; margin-bottom: 15px; border-radius: 8px; border: 1px solid #555; background: #333; color: white; font-size: 16px; text-align: center; }
-        #join-btn { width: 305px; padding: 15px; background: #27ae60; color: white; border: none; border-radius: 8px; font-size: 18px; font-weight: bold; cursor: pointer; transition: background 0.3s; }
+        #tank-select, #room-code { width: 300px; padding: 12px; margin-bottom: 15px; border-radius: 8px; border: 1px solid #555; background: #333; color: white; font-size: 16px; text-align: center; }
+        #join-btn { width: 325px; padding: 15px; background: #27ae60; color: white; border: none; border-radius: 8px; font-size: 18px; font-weight: bold; cursor: pointer; transition: background 0.3s; }
         #join-btn:hover { background: #2ecc71; }
         #game-container { display: none; flex-direction: column; align-items: center; position: relative; }
         #ui-layer { width: 1200px; display: flex; justify-content: space-between; margin-bottom: 10px; padding: 0 20px; box-sizing: border-box; }
@@ -29,7 +29,7 @@
         <label style="margin-bottom: 8px; font-size: 14px; color: #aaa;">SELECT YOUR TANK</label>
         <select id="tank-select">
             <option value="balanced">⚖️ Basic (Standard)</option>
-            <option value="heavy">🛡️ Heavy Man (High DMG / Low Range)</option>
+            <option value="heavy">🛡️ Heavy Man (Extreme DMG / Short Range)</option>
             <option value="light">⚡ Speedy (Fast / Long Range)</option>
         </select>
         <input type="text" id="room-code" placeholder="ENTER ROOM CODE">
@@ -52,6 +52,6 @@
         <canvas id="gameCanvas" width="1200" height="600"></canvas>
         <div id="status">ANGLE: 45 | POWER: 0 | FUEL: 100</div>
     </div>
-    <script type="module" src="game.js?v=24"></script>
+    <script type="module" src="game.js?v=25"></script>
 </body>
 </html>
