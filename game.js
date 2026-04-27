@@ -25,23 +25,10 @@ const lobbyStatus = document.getElementById('lobby-status');
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-// [NEW] HTML을 수정하지 않고 JS에서 로비에 탱크 선택 UI 자동 추가
-if (!document.getElementById('tank-select')) {
-    const selectHTML = `
-        <select id="tank-select" style="margin-bottom: 15px; padding: 10px; font-size: 14px; border-radius: 5px; width: 100%; max-width: 250px; text-align: center; background: #333; color: white; border: 1px solid #555;">
-            <option value="balanced">⚖️ 표준형 (HP 300 / 연료 100)</option>
-            <option value="heavy">🛡️ 탱커형 (HP 450 / 연료 50 / 정밀조준)</option>
-            <option value="light">⚡ 기동형 (HP 200 / 연료 200 / 쾌속기동)</option>
-        </select>
-    `;
-    roomCodeInput.insertAdjacentHTML('beforebegin', selectHTML);
-}
-
-// [NEW] 탱크 종류별 스탯 정의
 const TANK_TYPES = {
     'balanced': { name: '표준형', maxHp: 300, maxFuel: 100, speed: 2.5, powerSpeedInc: 0.05 },
-    'heavy': { name: '탱커형', maxHp: 450, maxFuel: 50, speed: 1.2, powerSpeedInc: 0.02 }, // 파워가 천천히 차올라 미세조작 유리
-    'light': { name: '기동형', maxHp: 200, maxFuel: 200, speed: 4.0, powerSpeedInc: 0.1 }   // 빠르지만 파워 게이지 훅훅 넘어감
+    'heavy': { name: '탱커형', maxHp: 450, maxFuel: 50, speed: 1.2, powerSpeedInc: 0.02 },
+    'light': { name: '기동형', maxHp: 200, maxFuel: 200, speed: 4.0, powerSpeedInc: 0.1 }
 };
 
 const WEAPONS = {
@@ -87,7 +74,6 @@ joinBtn.addEventListener('click', async () => {
     currentRoomCode = roomCodeInput.value.trim();
     if (!currentRoomCode) return alert("방 코드를 입력하세요!");
 
-    // 선택한 탱크 정보 가져오기
     const myTankChoice = document.getElementById('tank-select').value;
     const myTankStats = TANK_TYPES[myTankChoice];
 
@@ -101,12 +87,12 @@ joinBtn.addEventListener('click', async () => {
 
         if (!data || data.playersCount === 0) {
             gameState.myPlayerNum = 1;
-            gameState.fuel = myTankStats.maxFuel; // 초기 연료 세팅
+            gameState.fuel = myTankStats.maxFuel;
             const t = generateTerrain();
             await set(roomRef, { 
                 playersCount: 1, terrain: t, turn: 1, action: null, 
                 hp1: myTankStats.maxHp, tank1: myTankChoice,
-                hp2: 300, tank2: 'balanced' // 임시 값
+                hp2: 300, tank2: 'balanced'
             });
             gameState.terrain = t;
             onDisconnect(roomRef).remove();
@@ -125,7 +111,6 @@ joinBtn.addEventListener('click', async () => {
             const val = snap.val();
             if (!val) return;
             
-            // 양쪽 탱크 정보 동기화
             if (val.tank1) gameState.players[1].tankType = val.tank1;
             if (val.tank2) gameState.players[2].tankType = val.tank2;
 
@@ -142,7 +127,6 @@ joinBtn.addEventListener('click', async () => {
                 }
             }
 
-            // 동적 최대 체력에 맞춰 UI 바 업데이트
             if (val.hp1 !== undefined) {
                 gameState.players[1].hp = val.hp1;
                 const hpEl = document.getElementById('hp1');
@@ -233,7 +217,6 @@ function handleInput() {
     const currentWeaponInfo = WEAPONS[gameState.selectedWeapon];
     let stateChanged = false;
 
-    // [MODIFIED] 탱크 이동 속도를 클래스별 스탯으로 적용
     if (keys['ArrowLeft'] && gameState.fuel > 0) { p.x -= myTankStats.speed; gameState.fuel -= 1; stateChanged = true; }
     if (keys['ArrowRight'] && gameState.fuel > 0) { p.x += myTankStats.speed; gameState.fuel -= 1; stateChanged = true; }
     if (p.x < 30) p.x = 30; if (p.x > canvas.width - 30) p.x = canvas.width - 30;
@@ -254,7 +237,6 @@ function handleInput() {
     if (keys['Space']) {
         gameState.isCharging = true;
         gameState.power += gameState.powerSpeed * gameState.powerDir;
-        // [MODIFIED] 파워 차오르는 속도를 탱크별로 차별화 (조작 난이도)
         gameState.powerSpeed += myTankStats.powerSpeedInc; 
         
         if (gameState.power >= currentWeaponInfo.maxPower) { 
@@ -329,7 +311,6 @@ function updatePhysics() {
             }).then(() => { gameState.isProcessingHit = false; });
         }
         
-        // [MODIFIED] 내 턴이 다시 돌아오거나 끝날 때 내 탱크 종류에 맞는 Max 연료량으로 충전
         gameState.fuel = TANK_TYPES[gameState.players[gameState.myPlayerNum].tankType].maxFuel;
         updateTurnUI();
     }
@@ -417,7 +398,6 @@ function draw() {
         ctx.save();
         ctx.translate(p.x, tInfo.y - 12); 
         
-        // 탱크 머리 위 표시 (이름과 체력)
         ctx.fillStyle = '#aaa';
         ctx.font = '10px sans-serif';
         ctx.textAlign = 'center';
