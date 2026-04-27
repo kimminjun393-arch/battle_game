@@ -328,7 +328,7 @@ function updateTurnUI() {
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
-    const bg = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    const bg = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
     bg.addColorStop(0, '#111'); bg.addColorStop(1, '#2c2c2a');
     ctx.fillStyle = bg; ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -359,7 +359,6 @@ function draw() {
         ctx.restore();
     }
 
-    // [MODIFIED] 내 턴이면 항상 궤적을 그리도록 변경
     if (gameState.turn === gameState.myPlayerNum && !gameState.projectile.active) {
         const currentWeaponInfo = WEAPONS[gameState.selectedWeapon];
         const radian = gameState.angle * (Math.PI / 180);
@@ -367,7 +366,6 @@ function draw() {
         const pX = gameState.players[gameState.myPlayerNum].x;
         const tInfo = getTerrainInfo(pX);
 
-        // 기 모으는 중이면 '현재 파워', 아니면 '무기 최대 파워'로 미리보기
         const simPower = gameState.isCharging ? gameState.power : currentWeaponInfo.maxPower;
 
         let simX = pX;
@@ -378,8 +376,11 @@ function draw() {
         ctx.save();
         ctx.beginPath();
         ctx.moveTo(simX, simY);
-        // 충전 중일 때는 밝고 선명하게, 대기 중일 때는 반투명하게 표시
-        ctx.strokeStyle = gameState.isCharging ? 'rgba(255, 255, 255, 0.8)' : 'rgba(255, 255, 255, 0.25)';
+        
+        // [NEW] 무기 색상에 맞춰 궤적 색상 변경! 충전 중이면 진하게, 대기 중엔 반투명하게.
+        ctx.globalAlpha = gameState.isCharging ? 1.0 : 0.35;
+        ctx.strokeStyle = currentWeaponInfo.color; 
+        
         ctx.lineWidth = 2;
         ctx.setLineDash([8, 12]);
 
