@@ -3,31 +3,31 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>뚝배기 깨기 온라인</title>
+    <title>STELLAR STRIKE - Online Artillery</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div id="lobby-container">
-        <h1>뚝배기 깨기</h1>
+        <h1>STELLAR STRIKE</h1>
         <div class="lobby-box">
-            <input type="text" id="room-code" placeholder="방 코드 (예: 7777)">
-            <button id="join-btn">방 접속 / 생성</button>
-            <div id="lobby-status">방 코드를 입력하고 친구를 기다리세요.</div>
+            <input type="text" id="room-code" placeholder="ENTER ROOM CODE (ex: 7777)">
+            <button id="join-btn">JOIN / CREATE ROOM</button>
+            <div id="lobby-status">친구와 같은 코드를 입력하고 접속하세요.</div>
         </div>
     </div>
 
     <div id="game-container" style="display: none;">
         <div id="ui">
             <div class="player-info">
-                <div>1P (Blue)</div>
+                <div class="p-label">PLAYER 1 (BLUE)</div>
                 <div class="hp-bar"><div id="hp1" class="hp-fill"></div></div>
             </div>
             <div class="status-board">
-                <div id="turn-display">PLAYER 1 TURN</div>
-                <div id="status">각도: 45° | 파워: 0</div>
+                <div id="turn-display">READY...</div>
+                <div id="status">ANGLE: 45° | POWER: 0</div>
             </div>
             <div class="player-info">
-                <div>2P (Red)</div>
+                <div class="p-label">PLAYER 2 (RED)</div>
                 <div class="hp-bar"><div id="hp2" class="hp-fill"></div></div>
             </div>
         </div>
