@@ -25,18 +25,27 @@ const lobbyStatus = document.getElementById('lobby-status');
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
+// [NEW] 무기 데이터 정의
+const WEAPONS = {
+    'Q': { name: 'NORMAL', dmg: 35, crater: 30, maxPower: 100, gravity: 0.22, color: '#f1c40f' },
+    'W': { name: 'HEAVY', dmg: 55, crater: 50, maxPower: 75, gravity: 0.28, color: '#e74c3c' },
+    'E': { name: 'SNIPER', dmg: 20, crater: 15, maxPower: 130, gravity: 0.15, color: '#00ffff' },
+    'R': { name: 'NUKE', dmg: 80, crater: 80, maxPower: 55, gravity: 0.35, color: '#9b59b6' }
+};
+
 let gameState = {
     turn: 1, 
     myPlayerNum: 1, 
     angle: 45,
     power: 0, powerDir: 1, powerSpeed: 1.5,
     fuel: 100,
+    selectedWeapon: 'Q', // [NEW] 기본 무기 설정
     isCharging: false, isGameStarted: false,
     players: {
         1: { x: 150, hp: 100, color: '#3498db', angle: 45 },
         2: { x: 1050, hp: 100, color: '#e74c3c', angle: 45 }
     },
-    projectile: { x: 0, y: 0, vx: 0, vy: 0, active: false, owner: 0 },
+    projectile: { x: 0, y: 0, vx: 0, vy: 0, active: false, owner: 0, weapon: 'Q' },
     terrain: [],
     lastActionId: 0,
     isProcessingHit: false 
@@ -44,9 +53,6 @@ let gameState = {
 
 const keys = {};
 let lastMoveSync = 0;
-
-// [NEW] 크레이터(파임) 반경 정의
-const CRATER_RADIUS = 30;
 
 function generateTerrain() {
     let t = [];
@@ -82,7 +88,6 @@ joinBtn.addEventListener('click', async () => {
             lobbyStatus.innerText = "상대방 대기 중...";
         } else {
             gameState.myPlayerNum = 2;
-            // 2P는 방의 초기 지형을 가져옴
             gameState.terrain = data.terrain || generateTerrain();
             await update(roomRef, { playersCount: 2 });
         }
@@ -98,10 +103,7 @@ joinBtn.addEventListener('click', async () => {
                 updateTurnUI();
             }
 
-            // [MODIFIED] 지형 실시간 동기화 - 핵심!!
-            // 상대방이 깎은 지형 데이터를 내 화면에 실시간으로 덮어씌움
             if (val.terrain && val.terrain.length > 0) {
-                // 단순 대입이 아니라 값 복사를 해야 데이터 꼬임을 막음
                 if (JSON.stringify(val.terrain) !== JSON.stringify(gameState.terrain)) {
                     gameState.terrain = [...val.terrain];
                 }
@@ -143,7 +145,18 @@ function startGame() {
     gameLoop();
 }
 
-window.addEventListener('keydown', (e) => keys[e.code] = true);
+window.addEventListener('keydown', (e) => {
+    keys[e.code] = true;
+    
+    // [NEW] 무기 교체 로직 (내 턴일 때, 기 모으는 중이 아닐 때만 가능)
+    if (gameState.turn === gameState.myPlayerNum && !gameState.isCharging && !gameState.projectile.active) {
+        if (e.code === 'KeyQ') gameState.selectedWeapon = 'Q';
+        if (e.code === 'KeyW') gameState.selectedWeapon = 'W';
+        if (e.code === 'KeyE') gameState.selectedWeapon = 'E';
+        if (e.code === 'KeyR') gameState.selectedWeapon = 'R';
+    }
+});
+
 window.addEventListener('keyup', (e) => {
     if (e.code === 'Space' && gameState.isCharging) {
         if (gameState.turn === gameState.myPlayerNum && !gameState.projectile.active) {
@@ -151,6 +164,7 @@ window.addEventListener('keyup', (e) => {
         }
         gameState.isCharging = false;
         gameState.power = 0;
+        gameState.powerSpeed = 1.5; // 발사 후 스피드 초기화
     }
     keys[e.code] = false;
 });
@@ -168,16 +182,11 @@ function handleInput() {
     if (gameState.turn !== gameState.myPlayerNum || gameState.projectile.active) return;
     
     const p = gameState.players[gameState.myPlayerNum];
+    const currentWeaponInfo = WEAPONS[gameState.selectedWeapon];
     let stateChanged = false;
 
     if (keys['ArrowLeft'] && gameState.fuel > 0) { p.x -= 2.5; gameState.fuel -= 1; stateChanged = true; }
     if (keys['ArrowRight'] && gameState.fuel > 0) { p.x += 2.5; gameState.fuel -= 1; stateChanged = true; }
-    
-    // [MODIFIED] 지형이 깎여서 낭떠러지가 되면 탱크가 아래로 추락하게 물리엔진 강화!!
-    const currentTerrainY = getTerrainInfo(p.x).y;
-    // 탱크 Y좌표가 지형 Y좌표보다 위에 있으면(값이 작으면) 아래로 떨어짐
-    // (이 로직은 draw에서 translate 할 때 tInfo.y를 사용하므로 시각적으로만 보완)
-
     if (p.x < 30) p.x = 30; if (p.x > canvas.width - 30) p.x = canvas.width - 30;
 
     if (keys['ArrowUp'] && gameState.angle < 90) { gameState.angle += 1; stateChanged = true; }
@@ -187,23 +196,30 @@ function handleInput() {
         const now = Date.now();
         if (now - lastMoveSync > 50) {
             update(ref(db, `rooms/${currentRoomCode}/players/${gameState.myPlayerNum}`), { 
-                x: p.x,
-                angle: gameState.angle
+                x: p.x, angle: gameState.angle
             });
             lastMoveSync = now;
         }
     }
 
+    // [MODIFIED] 파워 게이지 찰 때 무기별 최대치(maxPower)를 적용
     if (keys['Space']) {
         gameState.isCharging = true;
         gameState.power += gameState.powerSpeed * gameState.powerDir;
         gameState.powerSpeed += 0.05; 
-        if (gameState.power >= 100) { gameState.power = 100; gameState.powerDir = -1; }
-        else if (gameState.power <= 0) { gameState.power = 0; gameState.powerDir = 1; }
+        
+        if (gameState.power >= currentWeaponInfo.maxPower) { 
+            gameState.power = currentWeaponInfo.maxPower; 
+            gameState.powerDir = -1; 
+        } else if (gameState.power <= 0) { 
+            gameState.power = 0; 
+            gameState.powerDir = 1; 
+        }
     }
     
+    // UI 텍스트에 현재 무기 표시
     document.getElementById('status').innerText = 
-        `ANGLE: ${gameState.angle}° | POWER: ${Math.floor(gameState.power)} | FUEL: ${Math.floor(gameState.fuel)}`;
+        `[WEAPON: ${currentWeaponInfo.name}] | ANGLE: ${gameState.angle}° | POWER: ${Math.floor(gameState.power)} | FUEL: ${Math.floor(gameState.fuel)}`;
 }
 
 function sendFireAction() {
@@ -216,6 +232,7 @@ function sendFireAction() {
     const actionData = {
         id: actionId,
         player: gameState.myPlayerNum,
+        weapon: gameState.selectedWeapon, // [NEW] 어떤 무기를 쐈는지 전송
         startX: pX, startY: tInfo.y - 35,
         vx: Math.cos(radian) * (gameState.power * 0.25) * dir,
         vy: -Math.sin(radian) * (gameState.power * 0.25)
@@ -229,48 +246,41 @@ function sendFireAction() {
 
 function executeFire(data) {
     gameState.projectile = { 
-        x: data.startX, y: data.startY, vx: data.vx, vy: data.vy, active: true, 
-        owner: data.player 
+        x: data.startX, y: data.startY, vx: data.vx, vy: data.vy, 
+        active: true, owner: data.player, weapon: data.weapon 
     };
 }
 
 function updatePhysics() {
     if (!gameState.projectile.active) return;
 
+    const weaponInfo = WEAPONS[gameState.projectile.weapon];
+
     gameState.projectile.x += gameState.projectile.vx;
-    gameState.projectile.vy += 0.22;
+    // [MODIFIED] 무기별 고유 중력(무게) 적용
+    gameState.projectile.vy += weaponInfo.gravity; 
     gameState.projectile.y += gameState.projectile.vy;
 
     const px = Math.floor(gameState.projectile.x);
     const hitGround = px >= 0 && px < 1200 && gameState.projectile.y >= gameState.terrain[px];
-    // 포탄이 화면 위로 나가는 건 OOB 처리 안 함 (다시 떨어질 수 있으니까)
     const outOfBounds = gameState.projectile.y > canvas.height + 100 || gameState.projectile.x < -100 || gameState.projectile.x > canvas.width + 100;
 
     if (hitGround || outOfBounds) {
         gameState.projectile.active = false;
         
-        // 포탄 주인만 충돌 처리 권한을 가짐
         if (gameState.projectile.owner === gameState.myPlayerNum && !gameState.isProcessingHit) {
             gameState.isProcessingHit = true; 
             
             if (hitGround) {
-                // 1. 데미지 계산
                 checkHitAndSync(); 
-                
-                // [NEW] 2. 지형 파괴 계산 및 로컬 반영!!
-                const craterX = gameState.projectile.x;
-                applyCrater(craterX);
+                // [MODIFIED] 무기에 맞는 폭발 반경(크레이터) 적용
+                applyCrater(gameState.projectile.x, weaponInfo.crater);
             }
             
             const nextTurn = gameState.myPlayerNum === 1 ? 2 : 1;
-            // [MODIFIED] 3. 턴 전환, 미사일 데이터 삭제, 그리고 **변경된 지형 배열 전체**를 DB에 동기화!!
             update(roomRef, { 
-                turn: nextTurn, 
-                action: null,
-                terrain: gameState.terrain // 지형 배열 통째로 전송 (약 1200개 숫자)
-            }).then(() => {
-                gameState.isProcessingHit = false;
-            });
+                turn: nextTurn, action: null, terrain: gameState.terrain 
+            }).then(() => { gameState.isProcessingHit = false; });
         }
         
         gameState.fuel = 100;
@@ -278,27 +288,20 @@ function updatePhysics() {
     }
 }
 
-// [NEW] 지형을 원형으로 깎아내는 함수 - 핵심!!
-function applyCrater(craterX) {
-    const startX = Math.max(0, Math.floor(craterX - CRATER_RADIUS));
-    const endX = Math.min(canvas.width - 1, Math.floor(craterX + CRATER_RADIUS));
+// 파이는 크기 파라미터(radius) 추가
+function applyCrater(craterX, radius) {
+    const startX = Math.max(0, Math.floor(craterX - radius));
+    const endX = Math.min(canvas.width - 1, Math.floor(craterX + radius));
 
-    // 원의 방정식: (x-cx)^2 + (y-cy)^2 = r^2 -> y = cy + sqrt(r^2 - (x-cx)^2)
-    // 우리는 cy(원의 중심y)를 지형 표면으로 잡고, 지형 배열 값을 cy보다 더 크게(아래로) 만듦
     for (let x = startX; x <= endX; x++) {
         const dx = x - craterX;
-        // 반원 계산 (r^2 - dx^2)가 음수면 반지름 밖이므로 패스
-        const distSq = CRATER_RADIUS * CRATER_RADIUS - dx * dx;
+        const distSq = radius * radius - dx * dx;
         if (distSq > 0) {
-            const dy = Math.sqrt(distSq); // 중심에서 떨어진y거리
+            const dy = Math.sqrt(distSq); 
             const surfaceY = gameState.terrain[x];
-            // 지형 Y값을 기존 Y값과 원형y값 중 더 큰(아래에 있는) 값으로 선택!!
-            const newY = Math.max(surfaceY, surfaceY + dy * 0.7); // 0.7 곱해서 파임 깊이 조절
+            const newY = Math.max(surfaceY, surfaceY + dy * 0.8);
 
-            // 지형 배열 업데이트
-            if (newY < canvas.height - 10) { // 화면 맨 바닥까지 파이는 것 방지
-                gameState.terrain[x] = newY;
-            }
+            if (newY < canvas.height - 10) gameState.terrain[x] = newY;
         }
     }
 }
@@ -307,16 +310,14 @@ function checkHitAndSync() {
     const targetId = gameState.myPlayerNum === 1 ? 2 : 1;
     const tX = gameState.players[targetId].x;
     const tY = getTerrainInfo(tX).y;
-    // 탱크 지형 y 좌표에 맞춰 거리 판정 (지형 파괴된 거 반영됨)
     const dist = Math.hypot(gameState.projectile.x - tX, gameState.projectile.y - tY);
+    const weaponInfo = WEAPONS[gameState.projectile.weapon];
     
-    // 지형이 깎여서 포탄 Y가 탱크보다 훨씬 아래 있으면 안 맞은 걸로 처리해야 함
-    // (이미 outOfBounds 로직에 의해 땅 밑 충돌은 해결됨)
-
-    if (dist < 50) {
-        const newHP = Math.max(0, gameState.players[targetId].hp - 35);
-        const hpUpdate = {};
-        hpUpdate[`hp${targetId}`] = newHP;
+    // 폭발 반경 내에 있으면 데미지 판정 (무기별 크레이터 반경 + 여유분)
+    if (dist < weaponInfo.crater + 20) {
+        // [MODIFIED] 무기별 데미지 적용
+        const newHP = Math.max(0, gameState.players[targetId].hp - weaponInfo.dmg);
+        const hpUpdate = {}; hpUpdate[`hp${targetId}`] = newHP;
         update(roomRef, hpUpdate);
 
         if (newHP <= 0) {
@@ -340,38 +341,26 @@ function draw() {
     bg.addColorStop(0, '#111'); bg.addColorStop(1, '#2c2c2a');
     ctx.fillStyle = bg; ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // [MODIFIED] 지형 그리기 (파여진 거 반영됨)
-    ctx.fillStyle = '#7a6a4a'; // 황토색
-    ctx.beginPath();
-    ctx.moveTo(0, canvas.height); // 왼쪽 아래 시작
-    for (let x = 0; x < canvas.width; x++) {
-        ctx.lineTo(x, gameState.terrain[x]);
-    }
-    ctx.lineTo(canvas.width, canvas.height); // 오른쪽 아래 끝
-    ctx.closePath();
-    ctx.fill();
-    // 테두리 디테일
+    ctx.fillStyle = '#7a6a4a'; 
+    ctx.beginPath(); ctx.moveTo(0, canvas.height); 
+    for (let x = 0; x < canvas.width; x++) { ctx.lineTo(x, gameState.terrain[x]); }
+    ctx.lineTo(canvas.width, canvas.height); ctx.closePath(); ctx.fill();
     ctx.strokeStyle = '#554a3a'; ctx.lineWidth = 2; ctx.stroke();
 
     for (let id in gameState.players) {
         const p = gameState.players[id];
-        // 내 X 좌표에 따른 지형 정보 (깎여서 바뀐 Y, 회전각) 가져오기
         const tInfo = getTerrainInfo(p.x); 
-        
         ctx.save();
-        // [MODIFIED] 탱크를 항상 변경된 지형 Y 위에 배치 (translate)
         ctx.translate(p.x, tInfo.y - 12); 
-        
         ctx.save();
-        const currentAngle = (gameState.myPlayerNum == id) ? gameState.angle : (p.angle || 45);
         
-        if (id == 1) { ctx.rotate(-currentAngle * (Math.PI / 180)); } 
-        else { ctx.rotate((-180 + currentAngle) * (Math.PI / 180)); }
+        const currentAngle = (gameState.myPlayerNum == id) ? gameState.angle : (p.angle || 45);
+        if (id == 1) ctx.rotate(-currentAngle * (Math.PI / 180)); 
+        else ctx.rotate((-180 + currentAngle) * (Math.PI / 180)); 
         
         ctx.fillStyle = p.color; ctx.fillRect(0, -3, 30, 6);
         ctx.restore();
 
-        // 몸통 회전 (지형 기울기에 맞춤)
         ctx.rotate(tInfo.rotationRad);
         ctx.fillStyle = p.color;
         ctx.beginPath(); ctx.arc(0, 0, 13, 0, Math.PI*2); ctx.fill();
@@ -380,14 +369,20 @@ function draw() {
     }
 
     if (gameState.projectile.active) {
-        ctx.fillStyle = '#f1c40f';
-        ctx.beginPath(); ctx.arc(gameState.projectile.x, gameState.projectile.y, 5, 0, Math.PI*2); ctx.fill();
+        // [MODIFIED] 날아가는 미사일 색깔을 무기 고유색으로 칠함
+        const projWeaponInfo = WEAPONS[gameState.projectile.weapon];
+        ctx.fillStyle = projWeaponInfo.color;
+        ctx.beginPath(); ctx.arc(gameState.projectile.x, gameState.projectile.y, 6, 0, Math.PI*2); ctx.fill();
     }
 
     if (gameState.isCharging && gameState.turn === gameState.myPlayerNum) {
+        const currentWeaponInfo = WEAPONS[gameState.selectedWeapon];
         const barWidth = 300, barX = (canvas.width - 300) / 2;
         ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(barX, 30, barWidth, 15);
-        ctx.fillStyle = '#f1c40f'; ctx.fillRect(barX, 30, (gameState.power/100)*barWidth, 15);
+        // [MODIFIED] 무기별 최대치 대비 현재 파워 비율로 바 길이 계산
+        const fillRatio = gameState.power / currentWeaponInfo.maxPower;
+        ctx.fillStyle = currentWeaponInfo.color; // 기 모으는 바 색깔도 무기색으로 변경!
+        ctx.fillRect(barX, 30, fillRatio * barWidth, 15);
     }
 }
 
