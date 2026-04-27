@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>뚝배기 깨기 - 각도기 전쟁</title>
+    <style>
+        body { margin: 0; background: #2c3e50; color: white; font-family: sans-serif; overflow: hidden; display: flex; flex-direction: column; align-items: center; }
+        canvas { background: #ecf0f1; border: 5px solid #34495e; cursor: crosshair; margin-top: 10px; }
+        #ui { margin-top: 20px; text-align: center; width: 800px; display: flex; justify-content: space-between; }
+        .hp-bar { width: 200px; height: 20px; background: #bdc3c7; border: 2px solid #34495e; }
+        .hp-inner { width: 100%; height: 100%; background: #e74c3c; transition: width 0.3s; }
+        .turn-info { font-size: 24px; font-weight: bold; color: #f1c40f; }
+        .guide { color: #95a5a6; margin-top: 5px; }
+    </style>
+</head>
+<body>
+
+    <div id="ui">
+        <div>
+            <div>Player 1 (Blue)</div>
+            <div class="hp-bar"><div id="p1-hp" class="hp-inner"></div></div>
+        </div>
+        <div id="turn-display" class="turn-info">PLAYER 1 TURN</div>
+        <div>
+            <div>Player 2 (Red)</div>
+            <div class="hp-bar"><div id="p2-hp" class="hp-inner"></div></div>
+        </div>
+    </div>
+    <canvas id="gameCanvas" width="800" height="500"></canvas>
+    <div class="guide">마우스 드래그로 각도와 파워를 조절한 뒤 놓으세요!</div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const turnDisplay = document.getElementById('turn-display');
+
+    // 게임 설정
+    let turn = 1; // 1 또는 2
+    let isDragging = false;
+    let dragStartX, dragStartY;
+    let currentMouseX, currentMouseY;
+    let isFlying = false;
+
+    const gravity = 0.25;
+    const players = {
+        1: { x: 100, y: 450, color: '#3498db', hp: 100 },
+        2: { x: 700, y: 450, color: '#e74c3c', hp: 100 }
+    };
+
+    let projectile = { x: 0, y: 0, vx: 0, vy: 0, active: false };
+
+    // 마우스 이벤트
+    canvas.addEventListener('mousedown', (e) => {
+        if (isFlying) return;
+        isDragging = true;
+        dragStartX = e.offsetX;
+        dragStartY = e.offsetY;
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+        currentMouseX = e.offsetX;
+        currentMouseY = e.offsetY;
+    });
+
+    canvas.addEventListener('mouseup', (e) => {
+        if (!isDragging) return;
+        isDragging = false;
+
+        // 발사 파워와 각도 계산 (드래그한 반대 방향으로 발사)
+        const dx = dragStartX - e.offsetX;
+        const dy = dragStartY - e.offsetY;
+        
+        projectile.x = players[turn].x;
+        projectile.y = players[turn].y - 20;
+        projectile.vx = dx * 0.15; // 파워 조절 상수
+        projectile.vy = dy * 0.15;
+        projectile.active = true;
+        isFlying = true;
+    });
+
+    function update() {
+        if (projectile.active) {
+            projectile.x += projectile.vx;
+            projectile.y += projectile.vy;
+            projectile.vy += gravity;
+
+            // 지면 충돌
+            if (projectile.y > 480) {
+                checkHit();
+                resetTurn();
+            }
+        }
+    }
+
+    function checkHit() {
+        const targetNum = turn === 1 ? 2 : 1;
+        const target = players[targetNum];
+        const dist = Math.hypot(projectile.x - target.x, projectile.y - target.y);
+
+        if (dist < 40) { // 피격 판정 범위
+            target.hp -= 25;
+            document.getElementById(`p${targetNum}-hp`).style.width = target.hp + '%';
+            if (target.hp <= 0) {
+                alert(`Player ${turn} 승리!`);
+                location.reload();
+            }
+        }
+    }
+
+    function resetTurn() {
+        projectile.active = false;
+        isFlying = false;
+        turn = turn === 1 ? 2 : 1;
+        turnDisplay.innerText = `PLAYER ${turn} TURN`;
+        turnDisplay.style.color = players[turn].color;
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // 지면 그리기
+        ctx.fillStyle = '#7f8c8d';
+        ctx.fillRect(0, 470, canvas.width, 30);
+
+        // 플레이어 그리기
+        for (let id in players) {
+            const p = players[id];
+            ctx.fillStyle = p.color;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y - 20, 20, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // 가이드 라인 (드래그 중일 때)
+        if (isDragging) {
+            ctx.beginPath();
+            ctx.setLineDash([5, 5]);
+            ctx.moveTo(players[turn].x, players[turn].y - 20);
+            ctx.lineTo(players[turn].x + (dragStartX - currentMouseX), players[turn].y - 20 + (dragStartY - currentMouseY));
+            ctx.strokeStyle = '#95a5a6';
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
+        // 포탄 그리기
+        if (projectile.active) {
+            ctx.fillStyle = '#2c3e50';
+            ctx.beginPath();
+            ctx.arc(projectile.x, projectile.y, 8, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        requestAnimationFrame(() => {
+            update();
+            draw();
+        });
+    }
+
+    draw();
+</script>
+</body>
+</html>
