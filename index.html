@@ -1,7 +1,39 @@
-$ git revert ca9371a2703a76e52e5541e81afa4c9d3a42d973
-$ git revert 37bd3e3465e58742d0d5ad778908b8cdfb712b2a
-$ git revert 77642605ad2d02fb70a62081b5e1b7733c4d1e06
-$ git revert 682cd40a07bbb73c14ec8d5184da5421b9d498d2
-$ git revert 1064e3524e98d536fd5dcc4691ccf1ac25688a5c
-$ git revert f8abc2ebccfd645de2454057554e93f3af04357f
-$ git revert ef5b50b77c3f4171f5140e5c3072c8f0d61bbce2
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>STELLAR STRIKE - Online Artillery</title>
+    <link rel="stylesheet" href="style.css?v=17">
+</head>
+<body>
+    <div id="lobby-container">
+        <h1>STELLAR STRIKE</h1>
+        <div class="lobby-box">
+            <input type="text" id="room-code" placeholder="ENTER ROOM CODE (ex: 7777)">
+            <button id="join-btn">JOIN / CREATE ROOM</button>
+            <div id="lobby-status">친구와 같은 코드를 입력하고 접속하세요.</div>
+        </div>
+    </div>
+
+    <div id="game-container" style="display: none;">
+        <div id="ui">
+            <div class="player-info">
+                <div class="p-label">PLAYER 1 (BLUE)</div>
+                <div class="hp-bar"><div id="hp1" class="hp-fill"></div></div>
+            </div>
+            <div class="status-board">
+                <div id="turn-display">READY...</div>
+                <div id="status">ANGLE: 45° | POWER: 0 | FUEL: 100</div>
+            </div>
+            <div class="player-info">
+                <div class="p-label">PLAYER 2 (RED)</div>
+                <div class="hp-bar"><div id="hp2" class="hp-fill"></div></div>
+            </div>
+        </div>
+        <canvas id="gameCanvas" width="1200" height="500"></canvas>
+    </div>
+
+    <script type="module" src="game.js?v=17"></script>
+</body>
+</html>
