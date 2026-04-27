@@ -7,7 +7,16 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div id="game-container">
+    <div id="lobby-container">
+        <h1>뚝배기 깨기</h1>
+        <div class="lobby-box">
+            <input type="text" id="room-code" placeholder="방 코드 (예: 7777)">
+            <button id="join-btn">방 접속 / 생성</button>
+            <div id="lobby-status">방 코드를 입력하고 친구를 기다리세요.</div>
+        </div>
+    </div>
+
+    <div id="game-container" style="display: none;">
         <div id="ui">
             <div class="player-info">
                 <div>1P (Blue)</div>
@@ -22,7 +31,6 @@
                 <div class="hp-bar"><div id="hp2" class="hp-fill"></div></div>
             </div>
         </div>
-        
         <canvas id="gameCanvas" width="800" height="500"></canvas>
     </div>
 
