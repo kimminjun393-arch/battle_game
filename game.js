@@ -33,7 +33,6 @@ let gameState = {
     fuel: 100,
     isCharging: false, isGameStarted: false,
     players: {
-        // [수정] 상대방 각도 동기화를 위해 angle 값 추가
         1: { x: 150, hp: 100, color: '#3498db', angle: 45 },
         2: { x: 1050, hp: 100, color: '#e74c3c', angle: 45 }
     },
@@ -119,7 +118,6 @@ function startGame() {
     lobbyContainer.style.display = 'none';
     gameContainer.style.display = 'flex';
     
-    // [수정] 상대방의 x 좌표뿐만 아니라 각도(angle)도 실시간으로 가져옴
     const otherPlayerNum = gameState.myPlayerNum === 1 ? 2 : 1;
     onValue(ref(db, `rooms/${currentRoomCode}/players/${otherPlayerNum}`), (snap) => {
         if (snap.exists()) {
@@ -166,7 +164,6 @@ function handleInput() {
     if (keys['ArrowUp'] && gameState.angle < 90) { gameState.angle += 1; stateChanged = true; }
     if (keys['ArrowDown'] && gameState.angle > 0) { gameState.angle -= 1; stateChanged = true; }
     
-    // [수정] 이동하거나 각도를 바꿀 때마다 DB에 동기화
     if (stateChanged) {
         const now = Date.now();
         if (now - lastMoveSync > 50) {
@@ -275,7 +272,9 @@ function updateTurnUI() {
 
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    const bg = ctx.createLinearGradient(0, 0, canvas.height);
+    
+    // [수정 완료된 부분] 0을 하나 더 추가해서 문법 에러 해결!
+    const bg = ctx.createLinearGradient(0, 0, 0, canvas.height);
     bg.addColorStop(0, '#111'); bg.addColorStop(1, '#2c2c2a');
     ctx.fillStyle = bg; ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -292,16 +291,12 @@ function draw() {
         ctx.save();
         ctx.translate(p.x, tInfo.y - 12);
         
-        // --- [수정] 포신 회전 로직 완벽 개선 ---
         ctx.save();
-        // 내가 움직이는 탱크면 내 각도를, 상대방이면 서버에 저장된 상대방 각도를 가져옴
         const currentAngle = (gameState.myPlayerNum == id) ? gameState.angle : (p.angle || 45);
         
         if (id == 1) {
-            // 1번(파랑)은 0도를 기준으로 위쪽(-방향)으로 꺾음
             ctx.rotate(-currentAngle * (Math.PI / 180));
         } else {
-            // 2번(빨강)은 180도(왼쪽)를 기준으로 위쪽(+방향)으로 꺾음
             ctx.rotate((-180 + currentAngle) * (Math.PI / 180));
         }
         
@@ -309,7 +304,6 @@ function draw() {
         ctx.fillRect(0, -3, 30, 6);
         ctx.restore();
 
-        // 몸통
         ctx.rotate(tInfo.rotationRad);
         ctx.fillStyle = p.color;
         ctx.beginPath(); ctx.arc(0, 0, 13, 0, Math.PI*2); ctx.fill();
