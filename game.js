@@ -25,6 +25,9 @@ const lobbyStatus = document.getElementById('lobby-status');
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
+// [NEW] 최대 체력 설정 상수 추가
+const MAX_HP = 300;
+
 const WEAPONS = {
     'Q': { name: 'NORMAL', dmg: 35, crater: 30, maxPower: 100, gravity: 0.22, color: '#f1c40f' },
     'W': { name: 'HEAVY', dmg: 55, crater: 50, maxPower: 75, gravity: 0.28, color: '#e74c3c' },
@@ -41,8 +44,8 @@ let gameState = {
     selectedWeapon: 'Q', 
     isCharging: false, isGameStarted: false,
     players: {
-        1: { x: 150, hp: 100, color: '#3498db', angle: 45 },
-        2: { x: 1050, hp: 100, color: '#e74c3c', angle: 45 }
+        1: { x: 150, hp: MAX_HP, color: '#3498db', angle: 45 },
+        2: { x: 1050, hp: MAX_HP, color: '#e74c3c', angle: 45 }
     },
     projectile: { x: 0, y: 0, vx: 0, vy: 0, active: false, owner: 0, weapon: 'Q' },
     terrain: [],
@@ -79,8 +82,9 @@ joinBtn.addEventListener('click', async () => {
         if (!data || data.playersCount === 0) {
             gameState.myPlayerNum = 1;
             const t = generateTerrain();
+            // [MODIFIED] 초기 체력을 MAX_HP로 설정
             await set(roomRef, { 
-                playersCount: 1, terrain: t, turn: 1, action: null, hp1: 100, hp2: 100 
+                playersCount: 1, terrain: t, turn: 1, action: null, hp1: MAX_HP, hp2: MAX_HP 
             });
             gameState.terrain = t;
             onDisconnect(roomRef).remove();
@@ -108,13 +112,32 @@ joinBtn.addEventListener('click', async () => {
                 }
             }
 
+            // [MODIFIED] HP 비율 계산 및 HTML 텍스트 표시
             if (val.hp1 !== undefined) {
                 gameState.players[1].hp = val.hp1;
-                document.getElementById('hp1').style.width = val.hp1 + '%';
+                const hpEl = document.getElementById('hp1');
+                if (hpEl) {
+                    hpEl.style.width = (val.hp1 / MAX_HP * 100) + '%';
+                    hpEl.innerText = `${Math.floor(val.hp1)} / ${MAX_HP}`;
+                    hpEl.style.textAlign = 'center';
+                    hpEl.style.color = 'white';
+                    hpEl.style.fontSize = '14px';
+                    hpEl.style.fontWeight = 'bold';
+                    hpEl.style.lineHeight = '20px'; // 높이에 맞춰 조절
+                }
             }
             if (val.hp2 !== undefined) {
                 gameState.players[2].hp = val.hp2;
-                document.getElementById('hp2').style.width = val.hp2 + '%';
+                const hpEl = document.getElementById('hp2');
+                if (hpEl) {
+                    hpEl.style.width = (val.hp2 / MAX_HP * 100) + '%';
+                    hpEl.innerText = `${Math.floor(val.hp2)} / ${MAX_HP}`;
+                    hpEl.style.textAlign = 'center';
+                    hpEl.style.color = 'white';
+                    hpEl.style.fontSize = '14px';
+                    hpEl.style.fontWeight = 'bold';
+                    hpEl.style.lineHeight = '20px';
+                }
             }
             
             if (val.action && val.action.id !== gameState.lastActionId) {
@@ -187,7 +210,6 @@ function handleInput() {
     if (keys['ArrowRight'] && gameState.fuel > 0) { p.x += 2.5; gameState.fuel -= 1; stateChanged = true; }
     if (p.x < 30) p.x = 30; if (p.x > canvas.width - 30) p.x = canvas.width - 30;
 
-    // [MODIFIED] 각도 제한 해제! 0 미만, 180 이상 모두 가능
     if (keys['ArrowUp']) { gameState.angle += 1; stateChanged = true; }
     if (keys['ArrowDown']) { gameState.angle -= 1; stateChanged = true; }
     
@@ -300,20 +322,17 @@ function applyCrater(craterX, radius) {
     }
 }
 
-// [MODIFIED] 자폭 데미지 로직 추가 (두 플레이어 모두 범위 체크)
 function checkHitAndSync() {
     const weaponInfo = WEAPONS[gameState.projectile.weapon];
     let hpUpdates = {};
     let isGameOver = false;
 
-    // 플레이어 1, 2 모두 폭발 범위 안에 있는지 확인
     for (let i = 1; i <= 2; i++) {
         const tX = gameState.players[i].x;
         const tY = getTerrainInfo(tX).y;
         const dist = Math.hypot(gameState.projectile.x - tX, gameState.projectile.y - tY);
         
         if (dist < weaponInfo.crater + 20) {
-            // 내가 쏜 미사일에 내가 맞으면 데미지를 절반(50%)만 받도록 설정
             let dmgApplied = weaponInfo.dmg;
             if (i === gameState.projectile.owner) {
                 dmgApplied = Math.floor(dmgApplied * 0.5);
@@ -365,8 +384,14 @@ function draw() {
         const tInfo = getTerrainInfo(p.x); 
         ctx.save();
         ctx.translate(p.x, tInfo.y - 12); 
-        ctx.save();
         
+        // [NEW] 탱크 머리 위 캔버스에도 체력을 정확한 숫자로 표시
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(`HP: ${Math.floor(p.hp)}`, 0, -25);
+        
+        ctx.save();
         const currentAngle = (gameState.myPlayerNum == id) ? gameState.angle : (p.angle || 45);
         if (id == 1) ctx.rotate(-currentAngle * (Math.PI / 180)); 
         else ctx.rotate((-180 + currentAngle) * (Math.PI / 180)); 
