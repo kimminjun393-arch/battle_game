@@ -25,6 +25,9 @@ const lobbyStatus = document.getElementById('lobby-status');
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
+// [NEW] 최대 체력 설정 상수 추가
+const MAX_HP = 300;
+
 const WEAPONS = {
     'Q': { name: 'NORMAL', dmg: 35, crater: 30, maxPower: 100, gravity: 0.22, color: '#f1c40f' },
     'W': { name: 'HEAVY', dmg: 55, crater: 50, maxPower: 75, gravity: 0.28, color: '#e74c3c' },
@@ -41,8 +44,8 @@ let gameState = {
     selectedWeapon: 'Q', 
     isCharging: false, isGameStarted: false,
     players: {
-        1: { x: 150, hp: 100, color: '#3498db', angle: 45 },
-        2: { x: 1050, hp: 100, color: '#e74c3c', angle: 45 }
+        1: { x: 150, hp: MAX_HP, color: '#3498db', angle: 45 },
+        2: { x: 1050, hp: MAX_HP, color: '#e74c3c', angle: 45 }
     },
     projectile: { x: 0, y: 0, vx: 0, vy: 0, active: false, owner: 0, weapon: 'Q' },
     terrain: [],
@@ -79,8 +82,9 @@ joinBtn.addEventListener('click', async () => {
         if (!data || data.playersCount === 0) {
             gameState.myPlayerNum = 1;
             const t = generateTerrain();
+            // [MODIFIED] 초기 체력을 MAX_HP로 설정
             await set(roomRef, { 
-                playersCount: 1, terrain: t, turn: 1, action: null, hp1: 100, hp2: 100 
+                playersCount: 1, terrain: t, turn: 1, action: null, hp1: MAX_HP, hp2: MAX_HP 
             });
             gameState.terrain = t;
             onDisconnect(roomRef).remove();
@@ -108,13 +112,32 @@ joinBtn.addEventListener('click', async () => {
                 }
             }
 
+            // [MODIFIED] HP 비율 계산 및 HTML 텍스트 표시
             if (val.hp1 !== undefined) {
                 gameState.players[1].hp = val.hp1;
-                document.getElementById('hp1').style.width = val.hp1 + '%';
+                const hpEl = document.getElementById('hp1');
+                if (hpEl) {
+                    hpEl.style.width = (val.hp1 / MAX_HP * 100) + '%';
+                    hpEl.innerText = `${Math.floor(val.hp1)} / ${MAX_HP}`;
+                    hpEl.style.textAlign = 'center';
+                    hpEl.style.color = 'white';
+                    hpEl.style.fontSize = '14px';
+                    hpEl.style.fontWeight = 'bold';
+                    hpEl.style.lineHeight = '20px'; // 높이에 맞춰 조절
+                }
             }
             if (val.hp2 !== undefined) {
                 gameState.players[2].hp = val.hp2;
-                document.getElementById('hp2').style.width = val.hp2 + '%';
+                const hpEl = document.getElementById('hp2');
+                if (hpEl) {
+                    hpEl.style.width = (val.hp2 / MAX_HP * 100) + '%';
+                    hpEl.innerText = `${Math.floor(val.hp2)} / ${MAX_HP}`;
+                    hpEl.style.textAlign = 'center';
+                    hpEl.style.color = 'white';
+                    hpEl.style.fontSize = '14px';
+                    hpEl.style.fontWeight = 'bold';
+                    hpEl.style.lineHeight = '20px';
+                }
             }
             
             if (val.action && val.action.id !== gameState.lastActionId) {
@@ -187,8 +210,8 @@ function handleInput() {
     if (keys['ArrowRight'] && gameState.fuel > 0) { p.x += 2.5; gameState.fuel -= 1; stateChanged = true; }
     if (p.x < 30) p.x = 30; if (p.x > canvas.width - 30) p.x = canvas.width - 30;
 
-    if (keys['ArrowUp'] && gameState.angle < 90) { gameState.angle += 1; stateChanged = true; }
-    if (keys['ArrowDown'] && gameState.angle > 0) { gameState.angle -= 1; stateChanged = true; }
+    if (keys['ArrowUp']) { gameState.angle += 1; stateChanged = true; }
+    if (keys['ArrowDown']) { gameState.angle -= 1; stateChanged = true; }
     
     if (stateChanged) {
         const now = Date.now();
@@ -300,20 +323,38 @@ function applyCrater(craterX, radius) {
 }
 
 function checkHitAndSync() {
-    const targetId = gameState.myPlayerNum === 1 ? 2 : 1;
-    const tX = gameState.players[targetId].x;
-    const tY = getTerrainInfo(tX).y;
-    const dist = Math.hypot(gameState.projectile.x - tX, gameState.projectile.y - tY);
     const weaponInfo = WEAPONS[gameState.projectile.weapon];
-    
-    if (dist < weaponInfo.crater + 20) {
-        const newHP = Math.max(0, gameState.players[targetId].hp - weaponInfo.dmg);
-        const hpUpdate = {}; hpUpdate[`hp${targetId}`] = newHP;
-        update(roomRef, hpUpdate);
+    let hpUpdates = {};
+    let isGameOver = false;
 
-        if (newHP <= 0) {
-            alert(`PLAYER ${gameState.myPlayerNum} WIN!`);
-            location.reload();
+    for (let i = 1; i <= 2; i++) {
+        const tX = gameState.players[i].x;
+        const tY = getTerrainInfo(tX).y;
+        const dist = Math.hypot(gameState.projectile.x - tX, gameState.projectile.y - tY);
+        
+        if (dist < weaponInfo.crater + 20) {
+            let dmgApplied = weaponInfo.dmg;
+            if (i === gameState.projectile.owner) {
+                dmgApplied = Math.floor(dmgApplied * 0.5);
+            }
+            
+            const newHP = Math.max(0, gameState.players[i].hp - dmgApplied);
+            hpUpdates[`hp${i}`] = newHP;
+            
+            if (newHP <= 0) {
+                isGameOver = true;
+            }
+        }
+    }
+
+    if (Object.keys(hpUpdates).length > 0) {
+        update(roomRef, hpUpdates);
+
+        if (isGameOver) {
+            setTimeout(() => {
+                alert("GAME OVER!");
+                location.reload();
+            }, 100);
         }
     }
 }
@@ -328,7 +369,7 @@ function updateTurnUI() {
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
-    const bg = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    const bg = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
     bg.addColorStop(0, '#111'); bg.addColorStop(1, '#2c2c2a');
     ctx.fillStyle = bg; ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -343,8 +384,14 @@ function draw() {
         const tInfo = getTerrainInfo(p.x); 
         ctx.save();
         ctx.translate(p.x, tInfo.y - 12); 
-        ctx.save();
         
+        // [NEW] 탱크 머리 위 캔버스에도 체력을 정확한 숫자로 표시
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 12px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(`HP: ${Math.floor(p.hp)}`, 0, -25);
+        
+        ctx.save();
         const currentAngle = (gameState.myPlayerNum == id) ? gameState.angle : (p.angle || 45);
         if (id == 1) ctx.rotate(-currentAngle * (Math.PI / 180)); 
         else ctx.rotate((-180 + currentAngle) * (Math.PI / 180)); 
@@ -359,35 +406,36 @@ function draw() {
         ctx.restore();
     }
 
-    // [NEW] 궤적(포물선) 그리기 - 스페이스바 누르고 있을 때만!
-    if (gameState.isCharging && gameState.turn === gameState.myPlayerNum) {
+    if (gameState.turn === gameState.myPlayerNum && !gameState.projectile.active) {
         const currentWeaponInfo = WEAPONS[gameState.selectedWeapon];
         const radian = gameState.angle * (Math.PI / 180);
         const dir = gameState.myPlayerNum === 1 ? 1 : -1;
         const pX = gameState.players[gameState.myPlayerNum].x;
         const tInfo = getTerrainInfo(pX);
 
+        const simPower = gameState.isCharging ? gameState.power : currentWeaponInfo.maxPower;
+
         let simX = pX;
         let simY = tInfo.y - 35;
-        let simVx = Math.cos(radian) * (gameState.power * 0.25) * dir;
-        let simVy = -Math.sin(radian) * (gameState.power * 0.25);
+        let simVx = Math.cos(radian) * (simPower * 0.25) * dir;
+        let simVy = -Math.sin(radian) * (simPower * 0.25);
 
         ctx.save();
         ctx.beginPath();
         ctx.moveTo(simX, simY);
-        // 반투명 흰색 점선 설정
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+        
+        ctx.globalAlpha = gameState.isCharging ? 1.0 : 0.35;
+        ctx.strokeStyle = currentWeaponInfo.color; 
+        
         ctx.lineWidth = 2;
-        ctx.setLineDash([8, 12]); // 점선 길이와 간격 설정
+        ctx.setLineDash([8, 12]);
 
-        // 최대 150틱(약 2.5초치) 시뮬레이션
         for (let i = 0; i < 150; i++) {
             simX += simVx;
             simVy += currentWeaponInfo.gravity;
             simY += simVy;
             ctx.lineTo(simX, simY);
             
-            // 지형에 충돌하거나 화면 밖으로 나가면 그리기 중단
             const checkX = Math.floor(simX);
             if (checkX >= 0 && checkX < canvas.width && simY >= gameState.terrain[checkX]) break;
             if (simY > canvas.height) break;
@@ -402,7 +450,6 @@ function draw() {
         ctx.beginPath(); ctx.arc(gameState.projectile.x, gameState.projectile.y, 6, 0, Math.PI*2); ctx.fill();
     }
 
-    // 무기 UI 패널
     ctx.save();
     ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
     ctx.fillRect(20, 20, 230, 130);
@@ -438,7 +485,6 @@ function draw() {
         
         ctx.font = '11px sans-serif';
         ctx.fillStyle = isSelected ? '#dddddd' : '#777777';
-        // [MODIFIED] EXP 대신 '사거리'로 텍스트 변경
         ctx.fillText(`ATK:${wInfo.dmg} | 사거리:${wInfo.maxPower}`, 135, yPos);
     });
     ctx.restore();
