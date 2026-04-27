@@ -1,196 +1,463 @@
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js";
+import { getDatabase, ref, get, set, update, onValue, onDisconnect } from "https://www.gstatic.com/firebasejs/10.8.1/firebase-database.js";
+
+const firebaseConfig = {
+    apiKey: "AIzaSyBUPl0t3VqvI_4VXEorTNXDAwlcUhnTuXE",
+    authDomain: "btgm-8ff81.firebaseapp.com",
+    databaseURL: "https://btgm-8ff81-default-rtdb.firebaseio.com",
+    projectId: "btgm-8ff81",
+    storageBucket: "btgm-8ff81.firebasestorage.app",
+    messagingSenderId: "1073665495467",
+    appId: "1:1073665495467:web:d2542c4e95e799128782ee",
+    measurementId: "G-WVLW591W2R"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+let roomRef = null;
+let currentRoomCode = "";
+
+const lobbyContainer = document.getElementById('lobby-container');
+const gameContainer = document.getElementById('game-container');
+const joinBtn = document.getElementById('join-btn');
+const roomCodeInput = document.getElementById('room-code');
+const lobbyStatus = document.getElementById('lobby-status');
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-// [NEW] 최대 체력 설정 상수 추가
-const MAX_HP = 300;
-// [NEW] HTML을 수정하지 않고 JS에서 로비에 탱크 선택 UI 자동 추가
-if (!document.getElementById('tank-select')) {
-    const selectHTML = `
-        <select id="tank-select" style="margin-bottom: 15px; padding: 10px; font-size: 14px; border-radius: 5px; width: 100%; max-width: 250px; text-align: center; background: #333; color: white; border: 1px solid #555;">
-            <option value="balanced">⚖️ 표준형 (HP 300 / 연료 100)</option>
-            <option value="heavy">🛡️ 탱커형 (HP 450 / 연료 50 / 정밀조준)</option>
-            <option value="light">⚡ 기동형 (HP 200 / 연료 200 / 쾌속기동)</option>
-        </select>
-    `;
-    roomCodeInput.insertAdjacentHTML('beforebegin', selectHTML);
-}
-
-// [NEW] 탱크 종류별 스탯 정의
-const TANK_TYPES = {
-    'balanced': { name: '표준형', maxHp: 300, maxFuel: 100, speed: 2.5, powerSpeedInc: 0.05 },
-    'heavy': { name: '탱커형', maxHp: 450, maxFuel: 50, speed: 1.2, powerSpeedInc: 0.02 }, // 파워가 천천히 차올라 미세조작 유리
-    'light': { name: '기동형', maxHp: 200, maxFuel: 200, speed: 4.0, powerSpeedInc: 0.1 }   // 빠르지만 파워 게이지 훅훅 넘어감
+const WEAPONS = {
+    'Q': { name: 'NORMAL', dmg: 35, crater: 30, maxPower: 100, gravity: 0.22, color: '#f1c40f' },
+    'W': { name: 'HEAVY', dmg: 55, crater: 50, maxPower: 75, gravity: 0.28, color: '#e74c3c' },
+    'E': { name: 'SNIPER', dmg: 20, crater: 15, maxPower: 130, gravity: 0.15, color: '#00ffff' },
+    'R': { name: 'NUKE', dmg: 80, crater: 80, maxPower: 55, gravity: 0.35, color: '#9b59b6' }
 };
 
-const WEAPONS = {
-'Q': { name: 'NORMAL', dmg: 35, crater: 30, maxPower: 100, gravity: 0.22, color: '#f1c40f' },
-@@ -44,8 +60,8 @@ let gameState = {
-selectedWeapon: 'Q', 
-isCharging: false, isGameStarted: false,
-players: {
-        1: { x: 150, hp: MAX_HP, color: '#3498db', angle: 45 },
-        2: { x: 1050, hp: MAX_HP, color: '#e74c3c', angle: 45 }
-        1: { x: 150, hp: 300, color: '#3498db', angle: 45, tankType: 'balanced' },
-        2: { x: 1050, hp: 300, color: '#e74c3c', angle: 45, tankType: 'balanced' }
-},
-projectile: { x: 0, y: 0, vx: 0, vy: 0, active: false, owner: 0, weapon: 'Q' },
-terrain: [],
-@@ -71,6 +87,10 @@ joinBtn.addEventListener('click', async () => {
-currentRoomCode = roomCodeInput.value.trim();
-if (!currentRoomCode) return alert("방 코드를 입력하세요!");
+let gameState = {
+    turn: 1, 
+    myPlayerNum: 1, 
+    angle: 45,
+    power: 0, powerDir: 1, powerSpeed: 1.5,
+    fuel: 100,
+    selectedWeapon: 'Q', 
+    isCharging: false, isGameStarted: false,
+    players: {
+        1: { x: 150, hp: 100, color: '#3498db', angle: 45 },
+        2: { x: 1050, hp: 100, color: '#e74c3c', angle: 45 }
+    },
+    projectile: { x: 0, y: 0, vx: 0, vy: 0, active: false, owner: 0, weapon: 'Q' },
+    terrain: [],
+    lastActionId: 0,
+    isProcessingHit: false 
+};
 
-    // 선택한 탱크 정보 가져오기
-    const myTankChoice = document.getElementById('tank-select').value;
-    const myTankStats = TANK_TYPES[myTankChoice];
+const keys = {};
+let lastMoveSync = 0;
 
-joinBtn.disabled = true;
-lobbyStatus.innerText = "전투 배치 중...";
-roomRef = ref(db, 'rooms/' + currentRoomCode);
-@@ -81,24 +101,34 @@ joinBtn.addEventListener('click', async () => {
+function generateTerrain() {
+    let t = [];
+    let base = 350, freq1 = 0.004, amp1 = 60, freq2 = 0.015, amp2 = 25;
+    const startRef = Math.random() * 2000;
+    for (let x = 0; x < canvas.width; x++) {
+        const y = base + Math.sin((x + startRef) * freq1) * amp1 + Math.sin((x + startRef) * freq2) * amp2;
+        t.push(y);
+    }
+    return t;
+}
 
-if (!data || data.playersCount === 0) {
-gameState.myPlayerNum = 1;
-            gameState.fuel = myTankStats.maxFuel; // 초기 연료 세팅
-const t = generateTerrain();
-            // [MODIFIED] 초기 체력을 MAX_HP로 설정
-await set(roomRef, { 
-                playersCount: 1, terrain: t, turn: 1, action: null, hp1: MAX_HP, hp2: MAX_HP 
-                playersCount: 1, terrain: t, turn: 1, action: null, 
-                hp1: myTankStats.maxHp, tank1: myTankChoice,
-                hp2: 300, tank2: 'balanced' // 임시 값
-});
-gameState.terrain = t;
-onDisconnect(roomRef).remove();
-lobbyStatus.innerText = "상대방 대기 중...";
-} else {
-gameState.myPlayerNum = 2;
-            gameState.fuel = myTankStats.maxFuel;
-gameState.terrain = data.terrain || generateTerrain();
-            await update(roomRef, { playersCount: 2 });
-            await update(roomRef, { 
-                playersCount: 2,
-                hp2: myTankStats.maxHp, tank2: myTankChoice
+joinBtn.addEventListener('click', async () => {
+    currentRoomCode = roomCodeInput.value.trim();
+    if (!currentRoomCode) return alert("방 코드를 입력하세요!");
+
+    joinBtn.disabled = true;
+    lobbyStatus.innerText = "전투 배치 중...";
+    roomRef = ref(db, 'rooms/' + currentRoomCode);
+
+    try {
+        const snapshot = await get(roomRef);
+        const data = snapshot.val();
+
+        if (!data || data.playersCount === 0) {
+            gameState.myPlayerNum = 1;
+            const t = generateTerrain();
+            await set(roomRef, { 
+                playersCount: 1, terrain: t, turn: 1, action: null, hp1: 100, hp2: 100 
             });
+            gameState.terrain = t;
+            onDisconnect(roomRef).remove();
+            lobbyStatus.innerText = "상대방 대기 중...";
+        } else {
+            gameState.myPlayerNum = 2;
+            gameState.terrain = data.terrain || generateTerrain();
+            await update(roomRef, { playersCount: 2 });
+        }
+
+        onValue(roomRef, (snap) => {
+            const val = snap.val();
+            if (!val) return;
+            
+            if (val.playersCount === 2 && !gameState.isGameStarted) startGame();
+            
+            if (val.turn !== undefined && val.turn !== gameState.turn) {
+                gameState.turn = val.turn;
+                updateTurnUI();
+            }
+
+            if (val.terrain && val.terrain.length > 0) {
+                if (JSON.stringify(val.terrain) !== JSON.stringify(gameState.terrain)) {
+                    gameState.terrain = [...val.terrain];
+                }
+            }
+
+            if (val.hp1 !== undefined) {
+                gameState.players[1].hp = val.hp1;
+                document.getElementById('hp1').style.width = val.hp1 + '%';
+            }
+            if (val.hp2 !== undefined) {
+                gameState.players[2].hp = val.hp2;
+                document.getElementById('hp2').style.width = val.hp2 + '%';
+            }
+            
+            if (val.action && val.action.id !== gameState.lastActionId) {
+                if (val.action.player !== gameState.myPlayerNum) {
+                    gameState.lastActionId = val.action.id;
+                    executeFire(val.action);
+                }
+            }
+        });
+    } catch (e) { console.error(e); }
+});
+
+function startGame() {
+    gameState.isGameStarted = true;
+    lobbyContainer.style.display = 'none';
+    gameContainer.style.display = 'flex';
+    
+    const otherPlayerNum = gameState.myPlayerNum === 1 ? 2 : 1;
+    onValue(ref(db, `rooms/${currentRoomCode}/players/${otherPlayerNum}`), (snap) => {
+        if (snap.exists()) {
+            const data = snap.val();
+            if (data.x !== undefined) gameState.players[otherPlayerNum].x = data.x;
+            if (data.angle !== undefined) gameState.players[otherPlayerNum].angle = data.angle;
+        }
+    });
+    updateTurnUI();
+    gameLoop();
 }
 
-onValue(roomRef, (snap) => {
-const val = snap.val();
-if (!val) return;
+window.addEventListener('keydown', (e) => {
+    keys[e.code] = true;
+    
+    if (gameState.turn === gameState.myPlayerNum && !gameState.isCharging && !gameState.projectile.active) {
+        if (e.code === 'KeyQ') gameState.selectedWeapon = 'Q';
+        if (e.code === 'KeyW') gameState.selectedWeapon = 'W';
+        if (e.code === 'KeyE') gameState.selectedWeapon = 'E';
+        if (e.code === 'KeyR') gameState.selectedWeapon = 'R';
+    }
+});
 
-            // 양쪽 탱크 정보 동기화
-            if (val.tank1) gameState.players[1].tankType = val.tank1;
-            if (val.tank2) gameState.players[2].tankType = val.tank2;
+window.addEventListener('keyup', (e) => {
+    if (e.code === 'Space' && gameState.isCharging) {
+        if (gameState.turn === gameState.myPlayerNum && !gameState.projectile.active) {
+            sendFireAction();
+        }
+        gameState.isCharging = false;
+        gameState.power = 0;
+        gameState.powerSpeed = 1.5; 
+    }
+    keys[e.code] = false;
+});
 
-if (val.playersCount === 2 && !gameState.isGameStarted) startGame();
-
-if (val.turn !== undefined && val.turn !== gameState.turn) {
-@@ -112,31 +142,27 @@ joinBtn.addEventListener('click', async () => {
-}
-}
-
-            // [MODIFIED] HP 비율 계산 및 HTML 텍스트 표시
-            // 동적 최대 체력에 맞춰 UI 바 업데이트
-if (val.hp1 !== undefined) {
-gameState.players[1].hp = val.hp1;
-const hpEl = document.getElementById('hp1');
-                const maxHp1 = TANK_TYPES[gameState.players[1].tankType].maxHp;
-if (hpEl) {
-                    hpEl.style.width = (val.hp1 / MAX_HP * 100) + '%';
-                    hpEl.innerText = `${Math.floor(val.hp1)} / ${MAX_HP}`;
-                    hpEl.style.textAlign = 'center';
-                    hpEl.style.color = 'white';
-                    hpEl.style.fontSize = '14px';
-                    hpEl.style.fontWeight = 'bold';
-                    hpEl.style.lineHeight = '20px'; // 높이에 맞춰 조절
-                    hpEl.style.width = Math.max(0, (val.hp1 / maxHp1 * 100)) + '%';
-                    hpEl.innerText = `${Math.floor(val.hp1)} / ${maxHp1}`;
-                    hpEl.style.textAlign = 'center'; hpEl.style.color = 'white';
-                    hpEl.style.fontSize = '14px'; hpEl.style.fontWeight = 'bold'; hpEl.style.lineHeight = '20px';
-}
-}
-if (val.hp2 !== undefined) {
-gameState.players[2].hp = val.hp2;
-const hpEl = document.getElementById('hp2');
-                const maxHp2 = TANK_TYPES[gameState.players[2].tankType].maxHp;
-if (hpEl) {
-                    hpEl.style.width = (val.hp2 / MAX_HP * 100) + '%';
-                    hpEl.innerText = `${Math.floor(val.hp2)} / ${MAX_HP}`;
-                    hpEl.style.textAlign = 'center';
-                    hpEl.style.color = 'white';
-                    hpEl.style.fontSize = '14px';
-                    hpEl.style.fontWeight = 'bold';
-                    hpEl.style.lineHeight = '20px';
-                    hpEl.style.width = Math.max(0, (val.hp2 / maxHp2 * 100)) + '%';
-                    hpEl.innerText = `${Math.floor(val.hp2)} / ${maxHp2}`;
-                    hpEl.style.textAlign = 'center'; hpEl.style.color = 'white';
-                    hpEl.style.fontSize = '14px'; hpEl.style.fontWeight = 'bold'; hpEl.style.lineHeight = '20px';
-}
+function getTerrainInfo(x) {
+    const ix = Math.max(0, Math.min(1199, Math.floor(x)));
+    const y = gameState.terrain[ix] || 450;
+    const slopeX = Math.max(0, Math.min(1199, Math.floor(x + 10)));
+    const slopeY = gameState.terrain[slopeX] || 450;
+    const rotationRad = Math.atan2(slopeY - y, slopeX - x);
+    return { y, rotationRad };
 }
 
-@@ -203,11 +229,13 @@ function handleInput() {
-if (gameState.turn !== gameState.myPlayerNum || gameState.projectile.active) return;
-
-const p = gameState.players[gameState.myPlayerNum];
-    const myTankStats = TANK_TYPES[p.tankType];
-const currentWeaponInfo = WEAPONS[gameState.selectedWeapon];
-let stateChanged = false;
+function handleInput() {
+    if (gameState.turn !== gameState.myPlayerNum || gameState.projectile.active) return;
+    
+    const p = gameState.players[gameState.myPlayerNum];
+    const currentWeaponInfo = WEAPONS[gameState.selectedWeapon];
+    let stateChanged = false;
 
     if (keys['ArrowLeft'] && gameState.fuel > 0) { p.x -= 2.5; gameState.fuel -= 1; stateChanged = true; }
     if (keys['ArrowRight'] && gameState.fuel > 0) { p.x += 2.5; gameState.fuel -= 1; stateChanged = true; }
-    // [MODIFIED] 탱크 이동 속도를 클래스별 스탯으로 적용
-    if (keys['ArrowLeft'] && gameState.fuel > 0) { p.x -= myTankStats.speed; gameState.fuel -= 1; stateChanged = true; }
-    if (keys['ArrowRight'] && gameState.fuel > 0) { p.x += myTankStats.speed; gameState.fuel -= 1; stateChanged = true; }
-if (p.x < 30) p.x = 30; if (p.x > canvas.width - 30) p.x = canvas.width - 30;
+    if (p.x < 30) p.x = 30; if (p.x > canvas.width - 30) p.x = canvas.width - 30;
 
-if (keys['ArrowUp']) { gameState.angle += 1; stateChanged = true; }
-@@ -226,7 +254,8 @@ function handleInput() {
-if (keys['Space']) {
-gameState.isCharging = true;
-gameState.power += gameState.powerSpeed * gameState.powerDir;
+    if (keys['ArrowUp'] && gameState.angle < 90) { gameState.angle += 1; stateChanged = true; }
+    if (keys['ArrowDown'] && gameState.angle > 0) { gameState.angle -= 1; stateChanged = true; }
+    
+    if (stateChanged) {
+        const now = Date.now();
+        if (now - lastMoveSync > 50) {
+            update(ref(db, `rooms/${currentRoomCode}/players/${gameState.myPlayerNum}`), { 
+                x: p.x, angle: gameState.angle
+            });
+            lastMoveSync = now;
+        }
+    }
+
+    if (keys['Space']) {
+        gameState.isCharging = true;
+        gameState.power += gameState.powerSpeed * gameState.powerDir;
         gameState.powerSpeed += 0.05; 
-        // [MODIFIED] 파워 차오르는 속도를 탱크별로 차별화 (조작 난이도)
-        gameState.powerSpeed += myTankStats.powerSpeedInc; 
-
-if (gameState.power >= currentWeaponInfo.maxPower) { 
-gameState.power = currentWeaponInfo.maxPower; 
-@@ -238,7 +267,7 @@ function handleInput() {
-}
-
-document.getElementById('status').innerText = 
+        
+        if (gameState.power >= currentWeaponInfo.maxPower) { 
+            gameState.power = currentWeaponInfo.maxPower; 
+            gameState.powerDir = -1; 
+        } else if (gameState.power <= 0) { 
+            gameState.power = 0; 
+            gameState.powerDir = 1; 
+        }
+    }
+    
+    document.getElementById('status').innerText = 
         `ANGLE: ${gameState.angle}° | POWER: ${Math.floor(gameState.power)} | FUEL: ${Math.floor(gameState.fuel)}`;
-        `CLASS: ${myTankStats.name} | ANGLE: ${gameState.angle}° | POWER: ${Math.floor(gameState.power)} | FUEL: ${Math.floor(gameState.fuel)}`;
 }
 
 function sendFireAction() {
-@@ -300,7 +329,8 @@ function updatePhysics() {
-}).then(() => { gameState.isProcessingHit = false; });
+    const actionId = Date.now();
+    const radian = gameState.angle * (Math.PI / 180);
+    const dir = gameState.myPlayerNum === 1 ? 1 : -1;
+    const pX = gameState.players[gameState.myPlayerNum].x;
+    const tInfo = getTerrainInfo(pX);
+
+    const actionData = {
+        id: actionId,
+        player: gameState.myPlayerNum,
+        weapon: gameState.selectedWeapon, 
+        startX: pX, startY: tInfo.y - 35,
+        vx: Math.cos(radian) * (gameState.power * 0.25) * dir,
+        vy: -Math.sin(radian) * (gameState.power * 0.25)
+    };
+    
+    gameState.lastActionId = actionId;
+    gameState.isProcessingHit = false; 
+    update(roomRef, { action: actionData });
+    executeFire(actionData);
 }
 
+function executeFire(data) {
+    gameState.projectile = { 
+        x: data.startX, y: data.startY, vx: data.vx, vy: data.vy, 
+        active: true, owner: data.player, weapon: data.weapon 
+    };
+}
+
+function updatePhysics() {
+    if (!gameState.projectile.active) return;
+
+    const weaponInfo = WEAPONS[gameState.projectile.weapon];
+
+    gameState.projectile.x += gameState.projectile.vx;
+    gameState.projectile.vy += weaponInfo.gravity; 
+    gameState.projectile.y += gameState.projectile.vy;
+
+    const px = Math.floor(gameState.projectile.x);
+    const hitGround = px >= 0 && px < 1200 && gameState.projectile.y >= gameState.terrain[px];
+    const outOfBounds = gameState.projectile.y > canvas.height + 100 || gameState.projectile.x < -100 || gameState.projectile.x > canvas.width + 100;
+
+    if (hitGround || outOfBounds) {
+        gameState.projectile.active = false;
+        
+        if (gameState.projectile.owner === gameState.myPlayerNum && !gameState.isProcessingHit) {
+            gameState.isProcessingHit = true; 
+            
+            if (hitGround) {
+                checkHitAndSync(); 
+                applyCrater(gameState.projectile.x, weaponInfo.crater);
+            }
+            
+            const nextTurn = gameState.myPlayerNum === 1 ? 2 : 1;
+            update(roomRef, { 
+                turn: nextTurn, action: null, terrain: gameState.terrain 
+            }).then(() => { gameState.isProcessingHit = false; });
+        }
+        
         gameState.fuel = 100;
-        // [MODIFIED] 내 턴이 다시 돌아오거나 끝날 때 내 탱크 종류에 맞는 Max 연료량으로 충전
-        gameState.fuel = TANK_TYPES[gameState.players[gameState.myPlayerNum].tankType].maxFuel;
-updateTurnUI();
+        updateTurnUI();
+    }
 }
+
+function applyCrater(craterX, radius) {
+    const startX = Math.max(0, Math.floor(craterX - radius));
+    const endX = Math.min(canvas.width - 1, Math.floor(craterX + radius));
+
+    for (let x = startX; x <= endX; x++) {
+        const dx = x - craterX;
+        const distSq = radius * radius - dx * dx;
+        if (distSq > 0) {
+            const dy = Math.sqrt(distSq); 
+            const surfaceY = gameState.terrain[x];
+            const newY = Math.max(surfaceY, surfaceY + dy * 0.8);
+
+            if (newY < canvas.height - 10) gameState.terrain[x] = newY;
+        }
+    }
 }
-@@ -382,13 +412,19 @@ function draw() {
-for (let id in gameState.players) {
-const p = gameState.players[id];
-const tInfo = getTerrainInfo(p.x); 
-        const pTankStats = TANK_TYPES[p.tankType || 'balanced'];
 
-ctx.save();
-ctx.translate(p.x, tInfo.y - 12); 
+function checkHitAndSync() {
+    const targetId = gameState.myPlayerNum === 1 ? 2 : 1;
+    const tX = gameState.players[targetId].x;
+    const tY = getTerrainInfo(tX).y;
+    const dist = Math.hypot(gameState.projectile.x - tX, gameState.projectile.y - tY);
+    const weaponInfo = WEAPONS[gameState.projectile.weapon];
+    
+    if (dist < weaponInfo.crater + 20) {
+        const newHP = Math.max(0, gameState.players[targetId].hp - weaponInfo.dmg);
+        const hpUpdate = {}; hpUpdate[`hp${targetId}`] = newHP;
+        update(roomRef, hpUpdate);
 
-        // [NEW] 탱크 머리 위 캔버스에도 체력을 정확한 숫자로 표시
-        // 탱크 머리 위 표시 (이름과 체력)
-        ctx.fillStyle = '#aaa';
-        ctx.font = '10px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(`[${pTankStats.name}]`, 0, -38);
+        if (newHP <= 0) {
+            alert(`PLAYER ${gameState.myPlayerNum} WIN!`);
+            location.reload();
+        }
+    }
+}
 
-ctx.fillStyle = '#fff';
-ctx.font = 'bold 12px sans-serif';
-        ctx.textAlign = 'center';
-ctx.fillText(`HP: ${Math.floor(p.hp)}`, 0, -25);
+function updateTurnUI() {
+    const el = document.getElementById('turn-display');
+    const isMyTurn = gameState.turn === gameState.myPlayerNum;
+    el.innerText = isMyTurn ? "YOUR TURN" : "WAITING...";
+    el.style.color = isMyTurn ? "#f1c40f" : "#666";
+}
 
-ctx.save();
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    const bg = ctx.createLinearGradient(0, 0, 0, canvas.height);
+    bg.addColorStop(0, '#111'); bg.addColorStop(1, '#2c2c2a');
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.fillStyle = '#7a6a4a'; 
+    ctx.beginPath(); ctx.moveTo(0, canvas.height); 
+    for (let x = 0; x < canvas.width; x++) { ctx.lineTo(x, gameState.terrain[x]); }
+    ctx.lineTo(canvas.width, canvas.height); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#554a3a'; ctx.lineWidth = 2; ctx.stroke();
+
+    for (let id in gameState.players) {
+        const p = gameState.players[id];
+        const tInfo = getTerrainInfo(p.x); 
+        ctx.save();
+        ctx.translate(p.x, tInfo.y - 12); 
+        ctx.save();
+        
+        const currentAngle = (gameState.myPlayerNum == id) ? gameState.angle : (p.angle || 45);
+        if (id == 1) ctx.rotate(-currentAngle * (Math.PI / 180)); 
+        else ctx.rotate((-180 + currentAngle) * (Math.PI / 180)); 
+        
+        ctx.fillStyle = p.color; ctx.fillRect(0, -3, 30, 6);
+        ctx.restore();
+
+        ctx.rotate(tInfo.rotationRad);
+        ctx.fillStyle = p.color;
+        ctx.beginPath(); ctx.arc(0, 0, 13, 0, Math.PI*2); ctx.fill();
+        ctx.strokeRect(-22, 4, 44, 16); ctx.fillRect(-22, 4, 44, 16);
+        ctx.restore();
+    }
+
+    // [NEW] 궤적(포물선) 그리기 - 스페이스바 누르고 있을 때만!
+    if (gameState.isCharging && gameState.turn === gameState.myPlayerNum) {
+        const currentWeaponInfo = WEAPONS[gameState.selectedWeapon];
+        const radian = gameState.angle * (Math.PI / 180);
+        const dir = gameState.myPlayerNum === 1 ? 1 : -1;
+        const pX = gameState.players[gameState.myPlayerNum].x;
+        const tInfo = getTerrainInfo(pX);
+
+        let simX = pX;
+        let simY = tInfo.y - 35;
+        let simVx = Math.cos(radian) * (gameState.power * 0.25) * dir;
+        let simVy = -Math.sin(radian) * (gameState.power * 0.25);
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(simX, simY);
+        // 반투명 흰색 점선 설정
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([8, 12]); // 점선 길이와 간격 설정
+
+        // 최대 150틱(약 2.5초치) 시뮬레이션
+        for (let i = 0; i < 150; i++) {
+            simX += simVx;
+            simVy += currentWeaponInfo.gravity;
+            simY += simVy;
+            ctx.lineTo(simX, simY);
+            
+            // 지형에 충돌하거나 화면 밖으로 나가면 그리기 중단
+            const checkX = Math.floor(simX);
+            if (checkX >= 0 && checkX < canvas.width && simY >= gameState.terrain[checkX]) break;
+            if (simY > canvas.height) break;
+        }
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    if (gameState.projectile.active) {
+        const projWeaponInfo = WEAPONS[gameState.projectile.weapon];
+        ctx.fillStyle = projWeaponInfo.color;
+        ctx.beginPath(); ctx.arc(gameState.projectile.x, gameState.projectile.y, 6, 0, Math.PI*2); ctx.fill();
+    }
+
+    // 무기 UI 패널
+    ctx.save();
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(20, 20, 230, 130);
+    ctx.strokeStyle = '#555';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(20, 20, 230, 130);
+
+    const keysArr = ['Q', 'W', 'E', 'R'];
+    keysArr.forEach((key, idx) => {
+        const wInfo = WEAPONS[key];
+        const isSelected = (gameState.selectedWeapon === key);
+        const yPos = 45 + (idx * 28);
+
+        if (isSelected) {
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+            ctx.fillRect(22, yPos - 16, 226, 26);
+        }
+
+        ctx.fillStyle = wInfo.color;
+        ctx.beginPath();
+        ctx.arc(40, yPos - 4, 6, 0, Math.PI * 2);
+        ctx.fill();
+        if (isSelected) {
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+        }
+
+        ctx.fillStyle = isSelected ? '#ffffff' : '#aaaaaa';
+        ctx.font = isSelected ? 'bold 13px sans-serif' : '13px sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText(`[${key}] ${wInfo.name}`, 55, yPos);
+        
+        ctx.font = '11px sans-serif';
+        ctx.fillStyle = isSelected ? '#dddddd' : '#777777';
+        // [MODIFIED] EXP 대신 '사거리'로 텍스트 변경
+        ctx.fillText(`ATK:${wInfo.dmg} | 사거리:${wInfo.maxPower}`, 135, yPos);
+    });
+    ctx.restore();
+
+    if (gameState.isCharging && gameState.turn === gameState.myPlayerNum) {
+        const currentWeaponInfo = WEAPONS[gameState.selectedWeapon];
+        const barWidth = 300, barX = (canvas.width - 300) / 2;
+        ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(barX, 30, barWidth, 15);
+        const fillRatio = gameState.power / currentWeaponInfo.maxPower;
+        ctx.fillStyle = currentWeaponInfo.color; 
+        ctx.fillRect(barX, 30, fillRatio * barWidth, 15);
+    }
+}
+
+function gameLoop() {
+    if (gameState.isGameStarted && gameState.terrain.length > 0) {
+        handleInput();
+        updatePhysics();
+        draw();
+    }
+    requestAnimationFrame(gameLoop);
+}
