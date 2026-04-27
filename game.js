@@ -187,8 +187,9 @@ function handleInput() {
     if (keys['ArrowRight'] && gameState.fuel > 0) { p.x += 2.5; gameState.fuel -= 1; stateChanged = true; }
     if (p.x < 30) p.x = 30; if (p.x > canvas.width - 30) p.x = canvas.width - 30;
 
-    if (keys['ArrowUp'] && gameState.angle < 90) { gameState.angle += 1; stateChanged = true; }
-    if (keys['ArrowDown'] && gameState.angle > 0) { gameState.angle -= 1; stateChanged = true; }
+    // [MODIFIED] 각도 제한 해제! 0 미만, 180 이상 모두 가능
+    if (keys['ArrowUp']) { gameState.angle += 1; stateChanged = true; }
+    if (keys['ArrowDown']) { gameState.angle -= 1; stateChanged = true; }
     
     if (stateChanged) {
         const now = Date.now();
@@ -299,21 +300,42 @@ function applyCrater(craterX, radius) {
     }
 }
 
+// [MODIFIED] 자폭 데미지 로직 추가 (두 플레이어 모두 범위 체크)
 function checkHitAndSync() {
-    const targetId = gameState.myPlayerNum === 1 ? 2 : 1;
-    const tX = gameState.players[targetId].x;
-    const tY = getTerrainInfo(tX).y;
-    const dist = Math.hypot(gameState.projectile.x - tX, gameState.projectile.y - tY);
     const weaponInfo = WEAPONS[gameState.projectile.weapon];
-    
-    if (dist < weaponInfo.crater + 20) {
-        const newHP = Math.max(0, gameState.players[targetId].hp - weaponInfo.dmg);
-        const hpUpdate = {}; hpUpdate[`hp${targetId}`] = newHP;
-        update(roomRef, hpUpdate);
+    let hpUpdates = {};
+    let isGameOver = false;
 
-        if (newHP <= 0) {
-            alert(`PLAYER ${gameState.myPlayerNum} WIN!`);
-            location.reload();
+    // 플레이어 1, 2 모두 폭발 범위 안에 있는지 확인
+    for (let i = 1; i <= 2; i++) {
+        const tX = gameState.players[i].x;
+        const tY = getTerrainInfo(tX).y;
+        const dist = Math.hypot(gameState.projectile.x - tX, gameState.projectile.y - tY);
+        
+        if (dist < weaponInfo.crater + 20) {
+            // 내가 쏜 미사일에 내가 맞으면 데미지를 절반(50%)만 받도록 설정
+            let dmgApplied = weaponInfo.dmg;
+            if (i === gameState.projectile.owner) {
+                dmgApplied = Math.floor(dmgApplied * 0.5);
+            }
+            
+            const newHP = Math.max(0, gameState.players[i].hp - dmgApplied);
+            hpUpdates[`hp${i}`] = newHP;
+            
+            if (newHP <= 0) {
+                isGameOver = true;
+            }
+        }
+    }
+
+    if (Object.keys(hpUpdates).length > 0) {
+        update(roomRef, hpUpdates);
+
+        if (isGameOver) {
+            setTimeout(() => {
+                alert("GAME OVER!");
+                location.reload();
+            }, 100);
         }
     }
 }
@@ -377,7 +399,6 @@ function draw() {
         ctx.beginPath();
         ctx.moveTo(simX, simY);
         
-        // [NEW] 무기 색상에 맞춰 궤적 색상 변경! 충전 중이면 진하게, 대기 중엔 반투명하게.
         ctx.globalAlpha = gameState.isCharging ? 1.0 : 0.35;
         ctx.strokeStyle = currentWeaponInfo.color; 
         
