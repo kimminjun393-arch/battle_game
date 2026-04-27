@@ -25,7 +25,6 @@ const lobbyStatus = document.getElementById('lobby-status');
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-// [NEW] 무기 데이터 정의
 const WEAPONS = {
     'Q': { name: 'NORMAL', dmg: 35, crater: 30, maxPower: 100, gravity: 0.22, color: '#f1c40f' },
     'W': { name: 'HEAVY', dmg: 55, crater: 50, maxPower: 75, gravity: 0.28, color: '#e74c3c' },
@@ -39,7 +38,7 @@ let gameState = {
     angle: 45,
     power: 0, powerDir: 1, powerSpeed: 1.5,
     fuel: 100,
-    selectedWeapon: 'Q', // [NEW] 기본 무기 설정
+    selectedWeapon: 'Q', 
     isCharging: false, isGameStarted: false,
     players: {
         1: { x: 150, hp: 100, color: '#3498db', angle: 45 },
@@ -148,7 +147,6 @@ function startGame() {
 window.addEventListener('keydown', (e) => {
     keys[e.code] = true;
     
-    // [NEW] 무기 교체 로직 (내 턴일 때, 기 모으는 중이 아닐 때만 가능)
     if (gameState.turn === gameState.myPlayerNum && !gameState.isCharging && !gameState.projectile.active) {
         if (e.code === 'KeyQ') gameState.selectedWeapon = 'Q';
         if (e.code === 'KeyW') gameState.selectedWeapon = 'W';
@@ -164,7 +162,7 @@ window.addEventListener('keyup', (e) => {
         }
         gameState.isCharging = false;
         gameState.power = 0;
-        gameState.powerSpeed = 1.5; // 발사 후 스피드 초기화
+        gameState.powerSpeed = 1.5; 
     }
     keys[e.code] = false;
 });
@@ -202,7 +200,6 @@ function handleInput() {
         }
     }
 
-    // [MODIFIED] 파워 게이지 찰 때 무기별 최대치(maxPower)를 적용
     if (keys['Space']) {
         gameState.isCharging = true;
         gameState.power += gameState.powerSpeed * gameState.powerDir;
@@ -217,9 +214,8 @@ function handleInput() {
         }
     }
     
-    // UI 텍스트에 현재 무기 표시
     document.getElementById('status').innerText = 
-        `[WEAPON: ${currentWeaponInfo.name}] | ANGLE: ${gameState.angle}° | POWER: ${Math.floor(gameState.power)} | FUEL: ${Math.floor(gameState.fuel)}`;
+        `ANGLE: ${gameState.angle}° | POWER: ${Math.floor(gameState.power)} | FUEL: ${Math.floor(gameState.fuel)}`;
 }
 
 function sendFireAction() {
@@ -232,7 +228,7 @@ function sendFireAction() {
     const actionData = {
         id: actionId,
         player: gameState.myPlayerNum,
-        weapon: gameState.selectedWeapon, // [NEW] 어떤 무기를 쐈는지 전송
+        weapon: gameState.selectedWeapon, 
         startX: pX, startY: tInfo.y - 35,
         vx: Math.cos(radian) * (gameState.power * 0.25) * dir,
         vy: -Math.sin(radian) * (gameState.power * 0.25)
@@ -257,7 +253,6 @@ function updatePhysics() {
     const weaponInfo = WEAPONS[gameState.projectile.weapon];
 
     gameState.projectile.x += gameState.projectile.vx;
-    // [MODIFIED] 무기별 고유 중력(무게) 적용
     gameState.projectile.vy += weaponInfo.gravity; 
     gameState.projectile.y += gameState.projectile.vy;
 
@@ -273,7 +268,6 @@ function updatePhysics() {
             
             if (hitGround) {
                 checkHitAndSync(); 
-                // [MODIFIED] 무기에 맞는 폭발 반경(크레이터) 적용
                 applyCrater(gameState.projectile.x, weaponInfo.crater);
             }
             
@@ -288,7 +282,6 @@ function updatePhysics() {
     }
 }
 
-// 파이는 크기 파라미터(radius) 추가
 function applyCrater(craterX, radius) {
     const startX = Math.max(0, Math.floor(craterX - radius));
     const endX = Math.min(canvas.width - 1, Math.floor(craterX + radius));
@@ -313,9 +306,7 @@ function checkHitAndSync() {
     const dist = Math.hypot(gameState.projectile.x - tX, gameState.projectile.y - tY);
     const weaponInfo = WEAPONS[gameState.projectile.weapon];
     
-    // 폭발 반경 내에 있으면 데미지 판정 (무기별 크레이터 반경 + 여유분)
     if (dist < weaponInfo.crater + 20) {
-        // [MODIFIED] 무기별 데미지 적용
         const newHP = Math.max(0, gameState.players[targetId].hp - weaponInfo.dmg);
         const hpUpdate = {}; hpUpdate[`hp${targetId}`] = newHP;
         update(roomRef, hpUpdate);
@@ -369,19 +360,60 @@ function draw() {
     }
 
     if (gameState.projectile.active) {
-        // [MODIFIED] 날아가는 미사일 색깔을 무기 고유색으로 칠함
         const projWeaponInfo = WEAPONS[gameState.projectile.weapon];
         ctx.fillStyle = projWeaponInfo.color;
         ctx.beginPath(); ctx.arc(gameState.projectile.x, gameState.projectile.y, 6, 0, Math.PI*2); ctx.fill();
     }
 
+    // [NEW] 무기 정보 UI 패널 그리기 (화면 왼쪽 위)
+    ctx.save();
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)'; // 반투명 배경
+    ctx.fillRect(20, 20, 230, 130);
+    ctx.strokeStyle = '#555';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(20, 20, 230, 130);
+
+    const keysArr = ['Q', 'W', 'E', 'R'];
+    keysArr.forEach((key, idx) => {
+        const wInfo = WEAPONS[key];
+        const isSelected = (gameState.selectedWeapon === key);
+        const yPos = 45 + (idx * 28);
+
+        // 선택된 무기 하이라이트 박스
+        if (isSelected) {
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+            ctx.fillRect(22, yPos - 16, 226, 26);
+        }
+
+        // 무기(미사일) 아이콘
+        ctx.fillStyle = wInfo.color;
+        ctx.beginPath();
+        ctx.arc(40, yPos - 4, 6, 0, Math.PI * 2);
+        ctx.fill();
+        if (isSelected) {
+            ctx.strokeStyle = '#fff';
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
+        }
+
+        // 텍스트 정보 (이름, 공격력, 폭발범위)
+        ctx.fillStyle = isSelected ? '#ffffff' : '#aaaaaa';
+        ctx.font = isSelected ? 'bold 13px sans-serif' : '13px sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText(`[${key}] ${wInfo.name}`, 55, yPos);
+        
+        ctx.font = '11px sans-serif';
+        ctx.fillStyle = isSelected ? '#dddddd' : '#777777';
+        ctx.fillText(`ATK:${wInfo.dmg} | EXP:${wInfo.crater}`, 135, yPos);
+    });
+    ctx.restore();
+
     if (gameState.isCharging && gameState.turn === gameState.myPlayerNum) {
         const currentWeaponInfo = WEAPONS[gameState.selectedWeapon];
         const barWidth = 300, barX = (canvas.width - 300) / 2;
         ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(barX, 30, barWidth, 15);
-        // [MODIFIED] 무기별 최대치 대비 현재 파워 비율로 바 길이 계산
         const fillRatio = gameState.power / currentWeaponInfo.maxPower;
-        ctx.fillStyle = currentWeaponInfo.color; // 기 모으는 바 색깔도 무기색으로 변경!
+        ctx.fillStyle = currentWeaponInfo.color; 
         ctx.fillRect(barX, 30, fillRatio * barWidth, 15);
     }
 }
