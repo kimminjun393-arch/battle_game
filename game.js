@@ -38,7 +38,8 @@ let gameState = {
     },
     projectile: { x: 0, y: 0, vx: 0, vy: 0, active: false },
     terrain: [],
-    lastActionId: 0 // [NEW] 마지막으로 처리한 발사 액션 ID 기록
+    lastActionId: 0,
+    isProcessingHit: false // [NEW] 충돌 처리 중 중복 방지 플래그
 };
 
 const keys = {};
@@ -46,9 +47,7 @@ let lastMoveSync = 0;
 
 function generateTerrain() {
     let t = [];
-    let base = 350; 
-    let freq1 = 0.004, amp1 = 60;
-    let freq2 = 0.015, amp2 = 25;
+    let base = 350, freq1 = 0.004, amp1 = 60, freq2 = 0.015, amp2 = 25;
     const startRef = Math.random() * 2000;
     for (let x = 0; x < canvas.width; x++) {
         const y = base + Math.sin((x + startRef) * freq1) * amp1 + Math.sin((x + startRef) * freq2) * amp2;
@@ -62,7 +61,7 @@ joinBtn.addEventListener('click', async () => {
     if (!currentRoomCode) return alert("방 코드를 입력하세요!");
 
     joinBtn.disabled = true;
-    lobbyStatus.innerText = "전장 입장 중...";
+    lobbyStatus.innerText = "전투 배치 중...";
     roomRef = ref(db, 'rooms/' + currentRoomCode);
 
     try {
@@ -72,7 +71,13 @@ joinBtn.addEventListener('click', async () => {
         if (!data || data.playersCount === 0) {
             gameState.myPlayerNum = 1;
             const t = generateTerrain();
-            await set(roomRef, { playersCount: 1, terrain: t, turn: 1, action: null });
+            await set(roomRef, { 
+                playersCount: 1, 
+                terrain: t, 
+                turn: 1, 
+                action: null,
+                hp1: 100, hp2: 100 // HP 초기화
+            });
             gameState.terrain = t;
             onDisconnect(roomRef).remove();
             lobbyStatus.innerText = "상대방 대기 중...";
@@ -82,20 +87,30 @@ joinBtn.addEventListener('click', async () => {
             await update(roomRef, { playersCount: 2 });
         }
 
-        // [핵심 보완] 데이터 수신 리스너 최적화
+        // 통합 리스너: DB의 변화를 내 로컬 상태에 동기화
         onValue(roomRef, (snap) => {
             const val = snap.val();
             if (!val) return;
             
             if (val.playersCount === 2 && !gameState.isGameStarted) startGame();
             
-            // 턴 동기화
-            if (val.turn !== undefined && gameState.turn !== val.turn) {
+            // 1. 턴 동기화
+            if (val.turn !== undefined) {
                 gameState.turn = val.turn;
                 updateTurnUI();
             }
+
+            // 2. HP 동기화
+            if (val.hp1 !== undefined) {
+                gameState.players[1].hp = val.hp1;
+                document.getElementById('hp1').style.width = val.hp1 + '%';
+            }
+            if (val.hp2 !== undefined) {
+                gameState.players[2].hp = val.hp2;
+                document.getElementById('hp2').style.width = val.hp2 + '%';
+            }
             
-            // [중요] 발사 액션 처리 (ID를 비교해서 새로운 발사만 실행)
+            // 3. 미사일 발사 동기화
             if (val.action && val.action.id !== gameState.lastActionId) {
                 if (val.action.player !== gameState.myPlayerNum) {
                     gameState.lastActionId = val.action.id;
@@ -112,11 +127,10 @@ function startGame() {
     lobbyContainer.style.display = 'none';
     gameContainer.style.display = 'flex';
     
+    // 상대방 X 위치만 따로 감시 (성능 최적화)
     const otherPlayerNum = gameState.myPlayerNum === 1 ? 2 : 1;
-    onValue(ref(db, `rooms/${currentRoomCode}/players/${otherPlayerNum}`), (snap) => {
-        if (snap.exists() && snap.val().x !== undefined) {
-            gameState.players[otherPlayerNum].x = snap.val().x;
-        }
+    onValue(ref(db, `rooms/${currentRoomCode}/players/${otherPlayerNum}/x`), (snap) => {
+        if (snap.exists()) gameState.players[otherPlayerNum].x = snap.val();
     });
     updateTurnUI();
     gameLoop();
@@ -124,21 +138,12 @@ function startGame() {
 
 window.addEventListener('keydown', (e) => keys[e.code] = true);
 window.addEventListener('keyup', (e) => {
-    // 발사 중이거나 내 턴이 아니면 입력 무시
     if (e.code === 'Space' && gameState.isCharging) {
         if (gameState.turn === gameState.myPlayerNum && !gameState.projectile.active) {
             sendFireAction();
-        } else {
-            // 강제 초기화
-            gameState.isCharging = false;
-            gameState.power = 0;
         }
-    }
-    
-    if ((e.code === 'ArrowLeft' || e.code === 'ArrowRight') && gameState.turn === gameState.myPlayerNum) {
-        update(ref(db, `rooms/${currentRoomCode}/players/${gameState.myPlayerNum}`), { 
-            x: gameState.players[gameState.myPlayerNum].x 
-        });
+        gameState.isCharging = false;
+        gameState.power = 0;
     }
     keys[e.code] = false;
 });
@@ -153,6 +158,7 @@ function getTerrainInfo(x) {
 }
 
 function handleInput() {
+    // 발사 중이거나 내 턴이 아니면 아무것도 못함
     if (gameState.turn !== gameState.myPlayerNum || gameState.projectile.active) return;
     
     const p = gameState.players[gameState.myPlayerNum];
@@ -164,7 +170,8 @@ function handleInput() {
 
     if (moved) {
         const now = Date.now();
-        if (now - lastMoveSync > 80) {
+        if (now - lastMoveSync > 50) {
+            // 중요: X 좌표만 업데이트 (턴 정보를 건드리지 않음)
             update(ref(db, `rooms/${currentRoomCode}/players/${gameState.myPlayerNum}`), { x: p.x });
             lastMoveSync = now;
         }
@@ -186,7 +193,7 @@ function handleInput() {
 }
 
 function sendFireAction() {
-    const actionId = Date.now(); // 고유 ID 생성
+    const actionId = Date.now();
     const radian = gameState.angle * (Math.PI / 180);
     const dir = gameState.myPlayerNum === 1 ? 1 : -1;
     const pX = gameState.players[gameState.myPlayerNum].x;
@@ -201,12 +208,9 @@ function sendFireAction() {
     };
     
     gameState.lastActionId = actionId;
+    gameState.isProcessingHit = false; // 발사 시 플래그 초기화
     update(roomRef, { action: actionData });
     executeFire(actionData);
-    
-    // 발사 즉시 충전 상태 해제
-    gameState.isCharging = false;
-    gameState.power = 0; gameState.powerDir = 1; gameState.powerSpeed = 1.5;
 }
 
 function executeFire(data) {
@@ -225,32 +229,43 @@ function updatePhysics() {
     const outOfBounds = gameState.projectile.y > canvas.height + 100 || gameState.projectile.x < -100 || gameState.projectile.x > canvas.width + 100;
 
     if (hitGround || outOfBounds) {
-        if (hitGround) checkHit();
-        
         gameState.projectile.active = false;
         
-        // [수정] 발사한 사람만 턴을 넘기도록 엄격히 제한
-        if (gameState.turn === gameState.myPlayerNum) {
+        // [핵심] 턴을 넘기는 권한은 오직 미사일을 쏜 사람에게만 있음
+        if (gameState.turn === gameState.myPlayerNum && !gameState.isProcessingHit) {
+            gameState.isProcessingHit = true; // 중복 실행 방지
+            
+            if (hitGround) checkHitAndSync(); // 데미지 계산 및 DB 동기화
+            
             const nextTurn = gameState.turn === 1 ? 2 : 1;
-            // 턴을 넘기면서 action도 비움
-            update(roomRef, { turn: nextTurn, action: null });
+            // 턴 전환과 미사일 데이터 삭제를 동시에 수행
+            update(roomRef, { 
+                turn: nextTurn, 
+                action: null 
+            }).then(() => {
+                gameState.isProcessingHit = false;
+            });
         }
         
-        gameState.fuel = 100; // 턴 끝날 때 연료 회복
+        gameState.fuel = 100;
         updateTurnUI();
     }
 }
 
-function checkHit() {
+// 쏜 사람이 상대방의 HP를 계산해서 DB에 올림 (전체 동기화)
+function checkHitAndSync() {
     const targetId = gameState.turn === 1 ? 2 : 1;
     const tX = gameState.players[targetId].x;
     const tY = getTerrainInfo(tX).y;
     const dist = Math.hypot(gameState.projectile.x - tX, gameState.projectile.y - tY);
     
     if (dist < 50) {
-        gameState.players[targetId].hp -= 35;
-        document.getElementById(`hp${targetId}`).style.width = Math.max(0, gameState.players[targetId].hp) + '%';
-        if (gameState.players[targetId].hp <= 0) {
+        const newHP = Math.max(0, gameState.players[targetId].hp - 35);
+        const hpUpdate = {};
+        hpUpdate[`hp${targetId}`] = newHP;
+        update(roomRef, hpUpdate); // DB에 깎인 HP 반영
+
+        if (newHP <= 0) {
             alert(`PLAYER ${gameState.turn} WIN!`);
             location.reload();
         }
@@ -270,6 +285,7 @@ function draw() {
     bg.addColorStop(0, '#111'); bg.addColorStop(1, '#2c2c2a');
     ctx.fillStyle = bg; ctx.fillRect(0, 0, canvas.width, canvas.height);
 
+    // 지형
     ctx.fillStyle = '#7a6a4a';
     ctx.beginPath();
     ctx.moveTo(0, canvas.height);
@@ -277,19 +293,23 @@ function draw() {
     ctx.lineTo(canvas.width, canvas.height);
     ctx.closePath(); ctx.fill();
 
+    // 탱크들
     for (let id in gameState.players) {
         const p = gameState.players[id];
         const tInfo = getTerrainInfo(p.x);
         ctx.save();
         ctx.translate(p.x, tInfo.y - 12);
         
+        // 포신
         ctx.save();
         const dir = (id == 1) ? 1 : -1;
-        const currentAngle = (gameState.turn == id) ? gameState.angle : 45;
+        // 내 탱크면 내가 조절하는 각도, 상대 탱크면 45도 고정 (또는 상대 각도 동기화 추가 가능)
+        const currentAngle = (gameState.myPlayerNum == id) ? gameState.angle : 45;
         ctx.rotate(-currentAngle * (Math.PI / 180) * dir);
         ctx.fillStyle = p.color; ctx.fillRect(0, -3, 30, 6);
         ctx.restore();
 
+        // 몸통
         ctx.rotate(tInfo.rotationRad);
         ctx.fillStyle = p.color;
         ctx.beginPath(); ctx.arc(0, 0, 13, 0, Math.PI*2); ctx.fill();
