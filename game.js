@@ -25,7 +25,6 @@ const lobbyStatus = document.getElementById('lobby-status');
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-// [NEW] 최대 체력 설정 상수 추가
 const MAX_HP = 300;
 
 const WEAPONS = {
@@ -55,6 +54,8 @@ let gameState = {
 
 const keys = {};
 let lastMoveSync = 0;
+// [NEW] 프레임 보정을 위한 시간 변수
+let lastTime = 0;
 
 function generateTerrain() {
     let t = [];
@@ -82,7 +83,6 @@ joinBtn.addEventListener('click', async () => {
         if (!data || data.playersCount === 0) {
             gameState.myPlayerNum = 1;
             const t = generateTerrain();
-            // [MODIFIED] 초기 체력을 MAX_HP로 설정
             await set(roomRef, { 
                 playersCount: 1, terrain: t, turn: 1, action: null, hp1: MAX_HP, hp2: MAX_HP 
             });
@@ -112,7 +112,6 @@ joinBtn.addEventListener('click', async () => {
                 }
             }
 
-            // [MODIFIED] HP 비율 계산 및 HTML 텍스트 표시
             if (val.hp1 !== undefined) {
                 gameState.players[1].hp = val.hp1;
                 const hpEl = document.getElementById('hp1');
@@ -123,7 +122,7 @@ joinBtn.addEventListener('click', async () => {
                     hpEl.style.color = 'white';
                     hpEl.style.fontSize = '14px';
                     hpEl.style.fontWeight = 'bold';
-                    hpEl.style.lineHeight = '20px'; // 높이에 맞춰 조절
+                    hpEl.style.lineHeight = '20px';
                 }
             }
             if (val.hp2 !== undefined) {
@@ -155,6 +154,9 @@ function startGame() {
     lobbyContainer.style.display = 'none';
     gameContainer.style.display = 'flex';
     
+    // [NEW] 게임 시작 시 시간 초기화
+    lastTime = performance.now();
+    
     const otherPlayerNum = gameState.myPlayerNum === 1 ? 2 : 1;
     onValue(ref(db, `rooms/${currentRoomCode}/players/${otherPlayerNum}`), (snap) => {
         if (snap.exists()) {
@@ -164,7 +166,8 @@ function startGame() {
         }
     });
     updateTurnUI();
-    gameLoop();
+    // 시작 시 바로 gameLoop 호출
+    requestAnimationFrame(gameLoop); 
 }
 
 window.addEventListener('keydown', (e) => {
@@ -199,19 +202,20 @@ function getTerrainInfo(x) {
     return { y, rotationRad };
 }
 
-function handleInput() {
+// [MODIFIED] timeScale 파라미터를 받아 움직임과 연료 소모를 보정
+function handleInput(timeScale) {
     if (gameState.turn !== gameState.myPlayerNum || gameState.projectile.active) return;
     
     const p = gameState.players[gameState.myPlayerNum];
     const currentWeaponInfo = WEAPONS[gameState.selectedWeapon];
     let stateChanged = false;
 
-    if (keys['ArrowLeft'] && gameState.fuel > 0) { p.x -= 2.5; gameState.fuel -= 1; stateChanged = true; }
-    if (keys['ArrowRight'] && gameState.fuel > 0) { p.x += 2.5; gameState.fuel -= 1; stateChanged = true; }
+    if (keys['ArrowLeft'] && gameState.fuel > 0) { p.x -= 2.5 * timeScale; gameState.fuel -= 1 * timeScale; stateChanged = true; }
+    if (keys['ArrowRight'] && gameState.fuel > 0) { p.x += 2.5 * timeScale; gameState.fuel -= 1 * timeScale; stateChanged = true; }
     if (p.x < 30) p.x = 30; if (p.x > canvas.width - 30) p.x = canvas.width - 30;
 
-    if (keys['ArrowUp']) { gameState.angle += 1; stateChanged = true; }
-    if (keys['ArrowDown']) { gameState.angle -= 1; stateChanged = true; }
+    if (keys['ArrowUp']) { gameState.angle += 1 * timeScale; stateChanged = true; }
+    if (keys['ArrowDown']) { gameState.angle -= 1 * timeScale; stateChanged = true; }
     
     if (stateChanged) {
         const now = Date.now();
@@ -225,8 +229,8 @@ function handleInput() {
 
     if (keys['Space']) {
         gameState.isCharging = true;
-        gameState.power += gameState.powerSpeed * gameState.powerDir;
-        gameState.powerSpeed += 0.05; 
+        gameState.power += gameState.powerSpeed * gameState.powerDir * timeScale;
+        gameState.powerSpeed += 0.05 * timeScale; 
         
         if (gameState.power >= currentWeaponInfo.maxPower) { 
             gameState.power = currentWeaponInfo.maxPower; 
@@ -238,7 +242,7 @@ function handleInput() {
     }
     
     document.getElementById('status').innerText = 
-        `ANGLE: ${gameState.angle}° | POWER: ${Math.floor(gameState.power)} | FUEL: ${Math.floor(gameState.fuel)}`;
+        `ANGLE: ${Math.floor(gameState.angle)}° | POWER: ${Math.floor(gameState.power)} | FUEL: ${Math.floor(gameState.fuel)}`;
 }
 
 function sendFireAction() {
@@ -270,14 +274,15 @@ function executeFire(data) {
     };
 }
 
-function updatePhysics() {
+// [MODIFIED] timeScale 파라미터를 받아 속도와 중력을 보정
+function updatePhysics(timeScale) {
     if (!gameState.projectile.active) return;
 
     const weaponInfo = WEAPONS[gameState.projectile.weapon];
 
-    gameState.projectile.x += gameState.projectile.vx;
-    gameState.projectile.vy += weaponInfo.gravity; 
-    gameState.projectile.y += gameState.projectile.vy;
+    gameState.projectile.x += gameState.projectile.vx * timeScale;
+    gameState.projectile.vy += weaponInfo.gravity * timeScale; 
+    gameState.projectile.y += gameState.projectile.vy * timeScale;
 
     const px = Math.floor(gameState.projectile.x);
     const hitGround = px >= 0 && px < 1200 && gameState.projectile.y >= gameState.terrain[px];
@@ -335,6 +340,7 @@ function checkHitAndSync() {
         if (dist < weaponInfo.crater + 20) {
             let dmgApplied = weaponInfo.dmg;
             if (i === gameState.projectile.owner) {
+                // 팀킬 혹은 자폭 시 데미지 50%
                 dmgApplied = Math.floor(dmgApplied * 0.5);
             }
             
@@ -385,7 +391,6 @@ function draw() {
         ctx.save();
         ctx.translate(p.x, tInfo.y - 12); 
         
-        // [NEW] 탱크 머리 위 캔버스에도 체력을 정확한 숫자로 표시
         ctx.fillStyle = '#fff';
         ctx.font = 'bold 12px sans-serif';
         ctx.textAlign = 'center';
@@ -499,10 +504,20 @@ function draw() {
     }
 }
 
-function gameLoop() {
+// [MODIFIED] gameLoop 시간 기반 보정 적용
+function gameLoop(timestamp) {
+    if (!timestamp) timestamp = performance.now();
+    
+    if (!lastTime) lastTime = timestamp;
+    const dt = timestamp - lastTime;
+    lastTime = timestamp;
+
+    const safeDt = Math.min(dt, 50);
+    const timeScale = safeDt / (1000 / 60);
+
     if (gameState.isGameStarted && gameState.terrain.length > 0) {
-        handleInput();
-        updatePhysics();
+        handleInput(timeScale);
+        updatePhysics(timeScale);
         draw();
     }
     requestAnimationFrame(gameLoop);
