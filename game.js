@@ -35,18 +35,31 @@ const WEAPONS = {
     'R': { name: 'NUKE', dmg: 80, crater: 80, maxPower: 55, gravity: 0.35, color: '#9b59b6' }
 };
 
+// 맵 테마 내에 여러 재질(mats) 추가
 const MAP_THEMES = {
     'GRASSLAND': { 
-        name: '초원', bgTop: '#87CEEB', bgBottom: '#E0F6FF', 
-        terrainFill: '#2ecc71', terrainStroke: '#27ae60', hardness: 1.3 
+        name: '초원', bgTop: '#87CEEB', bgBottom: '#E0F6FF',
+        mats: {
+            'DIRT': { fill: '#2ecc71', stroke: '#27ae60', hardness: 1.0 },
+            'ROCK': { fill: '#7f8c8d', stroke: '#636e72', hardness: 0.5 },
+            'SAND': { fill: '#f1c40f', stroke: '#e67e22', hardness: 1.5 }
+        }
     },
     'DESERT': { 
-        name: '사막', bgTop: '#FFDAB9', bgBottom: '#FFA07A', 
-        terrainFill: '#f1c40f', terrainStroke: '#e67e22', hardness: 1.0 
+        name: '사막', bgTop: '#FFDAB9', bgBottom: '#FFA07A',
+        mats: {
+            'DIRT': { fill: '#e67e22', stroke: '#d35400', hardness: 1.1 },
+            'ROCK': { fill: '#c0392b', stroke: '#922b21', hardness: 0.6 },
+            'SAND': { fill: '#f39c12', stroke: '#e67e22', hardness: 1.6 }
+        }
     },
     'BATTLEFIELD': { 
-        name: '전쟁터', bgTop: '#4a4a4a', bgBottom: '#2c2c2a', 
-        terrainFill: '#555555', terrainStroke: '#333333', hardness: 0.6 
+        name: '전쟁터', bgTop: '#4a4a4a', bgBottom: '#2c2c2a',
+        mats: {
+            'DIRT': { fill: '#555555', stroke: '#333333', hardness: 0.8 },
+            'ROCK': { fill: '#2d3436', stroke: '#1e272e', hardness: 0.4 },
+            'SAND': { fill: '#718093', stroke: '#2f3640', hardness: 1.2 }
+        }
     }
 };
 
@@ -61,12 +74,13 @@ let gameState = {
     cameraX: 0,
     cameraMode: 'auto', 
     theme: 'GRASSLAND',
+    terrain: [],
+    chunks: [], // 구역별 재질 데이터를 담는 배열
     players: {
         1: { x: 300, hp: MAX_HP, color: '#3498db', angle: 45 },
         2: { x: MAP_WIDTH - 300, hp: MAX_HP, color: '#e74c3c', angle: 45 }
     },
     projectile: { x: 0, y: 0, vx: 0, vy: 0, active: false, owner: 0, weapon: 'Q' },
-    terrain: [],
     lastActionId: 0,
     isProcessingHit: false 
 };
@@ -75,7 +89,8 @@ const keys = {};
 let lastMoveSync = 0;
 let lastTime = 0;
 
-function generateTerrain() {
+// 지형 높이와 구역(재질)을 함께 생성하는 함수
+function generateMapData() {
     let t = [];
     let base = 350, freq1 = 0.004, amp1 = 60, freq2 = 0.015, amp2 = 25;
     const startRef = Math.random() * 2000;
@@ -83,7 +98,25 @@ function generateTerrain() {
         const y = base + Math.sin((x + startRef) * freq1) * amp1 + Math.sin((x + startRef) * freq2) * amp2;
         t.push(y);
     }
-    return t;
+
+    let chunks = [];
+    let x = 0;
+    const types = ['DIRT', 'ROCK', 'SAND'];
+    
+    while (x < MAP_WIDTH) {
+        let width = 400 + Math.random() * 600; // 400 ~ 1000px 단위로 구역 나눔
+        let end = Math.min(x + width, MAP_WIDTH);
+        let matType = types[Math.floor(Math.random() * types.length)];
+        
+        // 바로 직전과 같은 재질이 나오지 않도록 방지
+        if (chunks.length > 0 && chunks[chunks.length - 1].mat === matType) {
+            matType = types[(types.indexOf(matType) + 1) % types.length];
+        }
+        
+        chunks.push({ start: Math.floor(x), end: Math.floor(end), mat: matType });
+        x = end;
+    }
+    return { terrain: t, chunks: chunks };
 }
 
 joinBtn.addEventListener('click', async () => {
@@ -101,19 +134,25 @@ joinBtn.addEventListener('click', async () => {
         if (!data || data.playersCount === 0) {
             const themeKeys = Object.keys(MAP_THEMES);
             const randomTheme = themeKeys[Math.floor(Math.random() * themeKeys.length)];
+            const mapData = generateMapData();
             
             gameState.myPlayerNum = 1;
-            const t = generateTerrain();
-            await set(roomRef, { 
-                playersCount: 1, terrain: t, turn: 1, action: null, hp1: MAX_HP, hp2: MAX_HP, theme: randomTheme
-            });
-            gameState.terrain = t;
+            gameState.terrain = mapData.terrain;
+            gameState.chunks = mapData.chunks;
             gameState.theme = randomTheme;
+
+            await set(roomRef, { 
+                playersCount: 1, 
+                terrain: mapData.terrain, 
+                chunks: mapData.chunks,
+                turn: 1, action: null, hp1: MAX_HP, hp2: MAX_HP, theme: randomTheme
+            });
             onDisconnect(roomRef).remove();
             lobbyStatus.innerText = "상대방 대기 중...";
         } else {
             gameState.myPlayerNum = 2;
-            gameState.terrain = data.terrain || generateTerrain();
+            gameState.terrain = data.terrain || generateMapData().terrain;
+            gameState.chunks = data.chunks || [];
             gameState.theme = data.theme || 'GRASSLAND';
             await update(roomRef, { playersCount: 2 });
         }
@@ -123,6 +162,8 @@ joinBtn.addEventListener('click', async () => {
             if (!val) return;
             
             if (val.theme) gameState.theme = val.theme;
+            if (val.chunks) gameState.chunks = val.chunks;
+            
             if (val.playersCount === 2 && !gameState.isGameStarted) startGame();
             
             if (val.turn !== undefined && val.turn !== gameState.turn) {
@@ -315,9 +356,13 @@ function updatePhysics(timeScale) {
             gameState.isProcessingHit = true; 
             if (hitGround) {
                 checkHitAndSync(); 
+                
+                // 포탄이 떨어진 x좌표가 속한 구역(chunk)을 찾아 해당 재질의 강도 적용
                 const currentTheme = MAP_THEMES[gameState.theme] || MAP_THEMES['GRASSLAND'];
-                const finalCraterRadius = weaponInfo.crater * currentTheme.hardness;
-                // 수정됨: 폭발 중심의 실제 Y좌표도 같이 넘겨줌
+                const hitChunk = gameState.chunks.find(c => px >= c.start && px < c.end) || gameState.chunks[0];
+                const matInfo = currentTheme.mats[hitChunk.mat];
+                
+                const finalCraterRadius = weaponInfo.crater * matInfo.hardness;
                 applyCrater(gameState.projectile.x, gameState.projectile.y, finalCraterRadius);
             }
             const nextTurn = gameState.myPlayerNum === 1 ? 2 : 1;
@@ -330,7 +375,6 @@ function updatePhysics(timeScale) {
     }
 }
 
-// 수정된 크레이터(지형 파괴) 로직
 function applyCrater(craterX, craterY, radius) {
     const startX = Math.max(0, Math.floor(craterX - radius));
     const endX = Math.min(MAP_WIDTH - 1, Math.floor(craterX + radius));
@@ -338,13 +382,9 @@ function applyCrater(craterX, craterY, radius) {
     for (let x = startX; x <= endX; x++) {
         const dx = x - craterX;
         const distSq = radius * radius - dx * dx;
-        
         if (distSq > 0) {
-            // 원의 아래쪽 둥근 부분을 계산하여 그 부분까지만 지형을 파냅니다.
             const dy = Math.sqrt(distSq); 
             const bottomOfCrater = craterY + dy; 
-            
-            // 현재 지형의 높이가 파여야 할 깊이보다 덜 파였다면 확실히 깎아냄
             if (gameState.terrain[x] < bottomOfCrater) {
                 gameState.terrain[x] = Math.min(bottomOfCrater, canvas.height - 10);
             }
@@ -361,8 +401,11 @@ function checkHitAndSync() {
         const tY = getTerrainInfo(tX).y;
         const dist = Math.hypot(gameState.projectile.x - tX, gameState.projectile.y - tY);
         
+        // 피격 판정 범위도 타격 지점의 지형 강도에 따라 약간의 보정을 받음
         const currentTheme = MAP_THEMES[gameState.theme] || MAP_THEMES['GRASSLAND'];
-        const finalCraterRadius = weaponInfo.crater * currentTheme.hardness;
+        const hitChunk = gameState.chunks.find(c => tX >= c.start && tX < c.end) || gameState.chunks[0];
+        const matInfo = currentTheme.mats[hitChunk.mat];
+        const finalCraterRadius = weaponInfo.crater * matInfo.hardness;
 
         if (dist < finalCraterRadius + 20) {
             let dmgApplied = weaponInfo.dmg;
@@ -408,6 +451,7 @@ function draw() {
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
+    // 배경
     const bg = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
     bg.addColorStop(0, currentTheme.bgTop); bg.addColorStop(1, currentTheme.bgBottom);
     ctx.fillStyle = bg; ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -415,11 +459,35 @@ function draw() {
     ctx.save();
     ctx.translate(-gameState.cameraX, 0);
 
-    ctx.fillStyle = currentTheme.terrainFill; 
-    ctx.beginPath(); ctx.moveTo(0, canvas.height); 
-    for (let x = 0; x < MAP_WIDTH; x++) { ctx.lineTo(x, gameState.terrain[x]); }
-    ctx.lineTo(MAP_WIDTH, canvas.height); ctx.closePath(); ctx.fill();
-    ctx.strokeStyle = currentTheme.terrainStroke; ctx.lineWidth = 2; ctx.stroke();
+    // 구역별(chunks)로 쪼개서 지형 그리기
+    gameState.chunks.forEach(chunk => {
+        const mat = currentTheme.mats[chunk.mat];
+        let sX = chunk.start;
+        // 구역 사이에 미세한 틈새가 보이는 것을 방지하기 위해 그리기 시작점을 1px 왼쪽으로 당김
+        let renderStartX = sX > 0 ? sX - 1 : sX; 
+        let eX = Math.min(chunk.end, MAP_WIDTH - 1);
+
+        // 구역 내부 채우기
+        ctx.fillStyle = mat.fill;
+        ctx.beginPath();
+        ctx.moveTo(renderStartX, canvas.height);
+        for(let x = renderStartX; x <= eX; x++) {
+            ctx.lineTo(x, gameState.terrain[x]);
+        }
+        ctx.lineTo(eX, canvas.height);
+        ctx.closePath();
+        ctx.fill();
+
+        // 윗부분 윤곽선 그리기
+        ctx.strokeStyle = mat.stroke;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        for(let x = renderStartX; x <= eX; x++) {
+            if(x === renderStartX) ctx.moveTo(x, gameState.terrain[x]);
+            else ctx.lineTo(x, gameState.terrain[x]);
+        }
+        ctx.stroke();
+    });
 
     for (let id in gameState.players) {
         const p = gameState.players[id];
@@ -521,7 +589,7 @@ function gameLoop(timestamp) {
     const safeDt = Math.min(dt, 50);
     const timeScale = safeDt / (1000 / 60);
 
-    if (gameState.isGameStarted && gameState.terrain.length > 0) {
+    if (gameState.isGameStarted && gameState.terrain.length > 0 && gameState.chunks.length > 0) {
         handleInput(timeScale);
         updatePhysics(timeScale);
         updateCamera();
