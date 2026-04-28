@@ -28,11 +28,28 @@ const ctx = canvas.getContext('2d');
 const MAX_HP = 300;
 const MAP_WIDTH = 3000; 
 
+// 무기 데이터
 const WEAPONS = {
     'Q': { name: 'NORMAL', dmg: 35, crater: 30, maxPower: 100, gravity: 0.22, color: '#f1c40f' },
     'W': { name: 'HEAVY', dmg: 55, crater: 50, maxPower: 75, gravity: 0.28, color: '#e74c3c' },
     'E': { name: 'SNIPER', dmg: 20, crater: 15, maxPower: 130, gravity: 0.15, color: '#00ffff' },
     'R': { name: 'NUKE', dmg: 80, crater: 80, maxPower: 55, gravity: 0.35, color: '#9b59b6' }
+};
+
+// 맵 테마 데이터 추가
+const MAP_THEMES = {
+    'GRASSLAND': { 
+        name: '초원', bgTop: '#87CEEB', bgBottom: '#E0F6FF', 
+        terrainFill: '#2ecc71', terrainStroke: '#27ae60', hardness: 1.3 
+    },
+    'DESERT': { 
+        name: '사막', bgTop: '#FFDAB9', bgBottom: '#FFA07A', 
+        terrainFill: '#f1c40f', terrainStroke: '#e67e22', hardness: 1.0 
+    },
+    'BATTLEFIELD': { 
+        name: '전쟁터', bgTop: '#4a4a4a', bgBottom: '#2c2c2a', 
+        terrainFill: '#555555', terrainStroke: '#333333', hardness: 0.6 
+    }
 };
 
 let gameState = {
@@ -44,7 +61,8 @@ let gameState = {
     selectedWeapon: 'Q', 
     isCharging: false, isGameStarted: false,
     cameraX: 0,
-    cameraMode: 'auto', // 'auto' 또는 'manual' 모드 추가
+    cameraMode: 'auto', 
+    theme: 'GRASSLAND', // 현재 방의 테마
     players: {
         1: { x: 300, hp: MAX_HP, color: '#3498db', angle: 45 },
         2: { x: MAP_WIDTH - 300, hp: MAX_HP, color: '#e74c3c', angle: 45 }
@@ -83,17 +101,23 @@ joinBtn.addEventListener('click', async () => {
         const data = snapshot.val();
 
         if (!data || data.playersCount === 0) {
+            // 방장: 테마 랜덤 뽑기
+            const themeKeys = Object.keys(MAP_THEMES);
+            const randomTheme = themeKeys[Math.floor(Math.random() * themeKeys.length)];
+            
             gameState.myPlayerNum = 1;
             const t = generateTerrain();
             await set(roomRef, { 
-                playersCount: 1, terrain: t, turn: 1, action: null, hp1: MAX_HP, hp2: MAX_HP 
+                playersCount: 1, terrain: t, turn: 1, action: null, hp1: MAX_HP, hp2: MAX_HP, theme: randomTheme
             });
             gameState.terrain = t;
+            gameState.theme = randomTheme;
             onDisconnect(roomRef).remove();
             lobbyStatus.innerText = "상대방 대기 중...";
         } else {
             gameState.myPlayerNum = 2;
             gameState.terrain = data.terrain || generateTerrain();
+            gameState.theme = data.theme || 'GRASSLAND';
             await update(roomRef, { playersCount: 2 });
         }
 
@@ -101,11 +125,13 @@ joinBtn.addEventListener('click', async () => {
             const val = snap.val();
             if (!val) return;
             
+            if (val.theme) gameState.theme = val.theme;
+
             if (val.playersCount === 2 && !gameState.isGameStarted) startGame();
             
             if (val.turn !== undefined && val.turn !== gameState.turn) {
                 gameState.turn = val.turn;
-                gameState.cameraMode = 'auto'; // 턴이 바뀌면 카메라 자동 모드로 복귀
+                gameState.cameraMode = 'auto'; 
                 updateTurnUI();
             }
 
@@ -127,7 +153,7 @@ joinBtn.addEventListener('click', async () => {
             if (val.action && val.action.id !== gameState.lastActionId) {
                 if (val.action.player !== gameState.myPlayerNum) {
                     gameState.lastActionId = val.action.id;
-                    gameState.cameraMode = 'auto'; // 상대가 쏘면 카메라 자동 추적
+                    gameState.cameraMode = 'auto'; 
                     executeFire(val.action);
                 }
             }
@@ -193,7 +219,6 @@ function getTerrainInfo(x) {
 }
 
 function handleInput(timeScale) {
-    // 카메라 수동 조작 (A, D 키) - 턴에 상관없이 언제든 가능
     if (keys['KeyA']) {
         gameState.cameraMode = 'manual';
         gameState.cameraX -= 15 * timeScale;
@@ -264,7 +289,7 @@ function sendFireAction() {
     
     gameState.lastActionId = actionId;
     gameState.isProcessingHit = false; 
-    gameState.cameraMode = 'auto'; // 발사 시 카메라 자동 모드로 전환하여 포탄 추적
+    gameState.cameraMode = 'auto'; 
     update(roomRef, { action: actionData });
     executeFire(actionData);
 }
@@ -294,7 +319,10 @@ function updatePhysics(timeScale) {
             gameState.isProcessingHit = true; 
             if (hitGround) {
                 checkHitAndSync(); 
-                applyCrater(gameState.projectile.x, weaponInfo.crater);
+                // 무기의 기본 파괴력에 지형의 강도를 곱해줍니다.
+                const currentTheme = MAP_THEMES[gameState.theme] || MAP_THEMES['GRASSLAND'];
+                const finalCraterRadius = weaponInfo.crater * currentTheme.hardness;
+                applyCrater(gameState.projectile.x, finalCraterRadius);
             }
             const nextTurn = gameState.myPlayerNum === 1 ? 2 : 1;
             update(roomRef, { 
@@ -325,11 +353,16 @@ function checkHitAndSync() {
     const weaponInfo = WEAPONS[gameState.projectile.weapon];
     let hpUpdates = {};
     let isGameOver = false;
+    // 데미지 계산 시에도 지형 파괴력 비례 등 추가 가능하나 지금은 기본 데미지 유지
     for (let i = 1; i <= 2; i++) {
         const tX = gameState.players[i].x;
         const tY = getTerrainInfo(tX).y;
         const dist = Math.hypot(gameState.projectile.x - tX, gameState.projectile.y - tY);
-        if (dist < weaponInfo.crater + 20) {
+        
+        const currentTheme = MAP_THEMES[gameState.theme] || MAP_THEMES['GRASSLAND'];
+        const finalCraterRadius = weaponInfo.crater * currentTheme.hardness;
+
+        if (dist < finalCraterRadius + 20) {
             let dmgApplied = weaponInfo.dmg;
             if (i === gameState.projectile.owner) dmgApplied = Math.floor(dmgApplied * 0.5);
             const newHP = Math.max(0, gameState.players[i].hp - dmgApplied);
@@ -353,44 +386,40 @@ function updateTurnUI() {
 }
 
 function updateCamera() {
-    // 1. 수동 모드일 때는 카메라 위치를 맵 경계 내로만 제한
     if (gameState.cameraMode === 'manual') {
         gameState.cameraX = Math.max(0, Math.min(gameState.cameraX, MAP_WIDTH - canvas.width));
         return;
     }
-
-    // 2. 자동 모드일 때 (추적 로직)
     let targetX;
     if (gameState.projectile.active) {
         targetX = gameState.projectile.x;
     } else {
         targetX = gameState.players[gameState.turn].x;
     }
-
     let desiredCameraX = targetX - (canvas.width / 2);
     desiredCameraX = Math.max(0, Math.min(desiredCameraX, MAP_WIDTH - canvas.width));
-
-    // 부드러운 추적
     gameState.cameraX += (desiredCameraX - gameState.cameraX) * 0.1;
 }
 
 function draw() {
+    const currentTheme = MAP_THEMES[gameState.theme] || MAP_THEMES['GRASSLAND'];
+
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
-    // 배경
+    // 테마별 배경색
     const bg = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-    bg.addColorStop(0, '#111'); bg.addColorStop(1, '#2c2c2a');
+    bg.addColorStop(0, currentTheme.bgTop); bg.addColorStop(1, currentTheme.bgBottom);
     ctx.fillStyle = bg; ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     ctx.save();
     ctx.translate(-gameState.cameraX, 0);
 
-    // 지형
-    ctx.fillStyle = '#7a6a4a'; 
+    // 테마별 지형색
+    ctx.fillStyle = currentTheme.terrainFill; 
     ctx.beginPath(); ctx.moveTo(0, canvas.height); 
     for (let x = 0; x < MAP_WIDTH; x++) { ctx.lineTo(x, gameState.terrain[x]); }
     ctx.lineTo(MAP_WIDTH, canvas.height); ctx.closePath(); ctx.fill();
-    ctx.strokeStyle = '#554a3a'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.strokeStyle = currentTheme.terrainStroke; ctx.lineWidth = 2; ctx.stroke();
 
     // 플레이어
     for (let id in gameState.players) {
@@ -399,6 +428,10 @@ function draw() {
         ctx.save();
         ctx.translate(p.x, tInfo.y - 12); 
         ctx.fillStyle = '#fff'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
+        
+        // 텍스트 가독성을 위해 테두리 추가
+        ctx.strokeStyle = '#000'; ctx.lineWidth = 3;
+        ctx.strokeText(`HP: ${Math.floor(p.hp)}`, 0, -25);
         ctx.fillText(`HP: ${Math.floor(p.hp)}`, 0, -25);
         
         ctx.save();
@@ -453,6 +486,17 @@ function draw() {
     ctx.restore();
 
     // UI (Screen Space)
+    
+    // 테마 이름 표시 UI
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(canvas.width - 150, 20, 130, 35);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`MAP: ${currentTheme.name}`, canvas.width - 85, 44);
+    ctx.restore();
+
     ctx.save();
     ctx.fillStyle = 'rgba(0, 0, 0, 0.6)'; ctx.fillRect(20, 20, 230, 130);
     ctx.strokeStyle = '#555'; ctx.lineWidth = 2; ctx.strokeRect(20, 20, 230, 130);
