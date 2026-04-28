@@ -26,7 +26,7 @@ const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
 const MAX_HP = 300;
-const MAP_WIDTH = 3000; // 넓어진 맵 크기 적용
+const MAP_WIDTH = 3000; 
 
 const WEAPONS = {
     'Q': { name: 'NORMAL', dmg: 35, crater: 30, maxPower: 100, gravity: 0.22, color: '#f1c40f' },
@@ -43,7 +43,8 @@ let gameState = {
     fuel: 100,
     selectedWeapon: 'Q', 
     isCharging: false, isGameStarted: false,
-    cameraX: 0, // 카메라 위치 변수 추가
+    cameraX: 0,
+    cameraMode: 'auto', // 'auto' 또는 'manual' 모드 추가
     players: {
         1: { x: 300, hp: MAX_HP, color: '#3498db', angle: 45 },
         2: { x: MAP_WIDTH - 300, hp: MAX_HP, color: '#e74c3c', angle: 45 }
@@ -62,7 +63,6 @@ function generateTerrain() {
     let t = [];
     let base = 350, freq1 = 0.004, amp1 = 60, freq2 = 0.015, amp2 = 25;
     const startRef = Math.random() * 2000;
-    // 맵을 MAP_WIDTH (3000px) 까지 생성하도록 수정
     for (let x = 0; x < MAP_WIDTH; x++) {
         const y = base + Math.sin((x + startRef) * freq1) * amp1 + Math.sin((x + startRef) * freq2) * amp2;
         t.push(y);
@@ -105,6 +105,7 @@ joinBtn.addEventListener('click', async () => {
             
             if (val.turn !== undefined && val.turn !== gameState.turn) {
                 gameState.turn = val.turn;
+                gameState.cameraMode = 'auto'; // 턴이 바뀌면 카메라 자동 모드로 복귀
                 updateTurnUI();
             }
 
@@ -126,6 +127,7 @@ joinBtn.addEventListener('click', async () => {
             if (val.action && val.action.id !== gameState.lastActionId) {
                 if (val.action.player !== gameState.myPlayerNum) {
                     gameState.lastActionId = val.action.id;
+                    gameState.cameraMode = 'auto'; // 상대가 쏘면 카메라 자동 추적
                     executeFire(val.action);
                 }
             }
@@ -138,11 +140,6 @@ function updateHPUI(playerNum, hp) {
     if (hpEl) {
         hpEl.style.width = (hp / MAX_HP * 100) + '%';
         hpEl.innerText = `${Math.floor(hp)} / ${MAX_HP}`;
-        hpEl.style.textAlign = 'center';
-        hpEl.style.color = 'white';
-        hpEl.style.fontSize = '14px';
-        hpEl.style.fontWeight = 'bold';
-        hpEl.style.lineHeight = '20px';
     }
 }
 
@@ -150,7 +147,6 @@ function startGame() {
     gameState.isGameStarted = true;
     lobbyContainer.style.display = 'none';
     gameContainer.style.display = 'flex';
-    
     lastTime = performance.now();
     
     const otherPlayerNum = gameState.myPlayerNum === 1 ? 2 : 1;
@@ -167,7 +163,6 @@ function startGame() {
 
 window.addEventListener('keydown', (e) => {
     keys[e.code] = true;
-    
     if (gameState.turn === gameState.myPlayerNum && !gameState.isCharging && !gameState.projectile.active) {
         if (e.code === 'KeyQ') gameState.selectedWeapon = 'Q';
         if (e.code === 'KeyW') gameState.selectedWeapon = 'W';
@@ -198,6 +193,16 @@ function getTerrainInfo(x) {
 }
 
 function handleInput(timeScale) {
+    // 카메라 수동 조작 (A, D 키) - 턴에 상관없이 언제든 가능
+    if (keys['KeyA']) {
+        gameState.cameraMode = 'manual';
+        gameState.cameraX -= 15 * timeScale;
+    }
+    if (keys['KeyD']) {
+        gameState.cameraMode = 'manual';
+        gameState.cameraX += 15 * timeScale;
+    }
+
     if (gameState.turn !== gameState.myPlayerNum || gameState.projectile.active) return;
     
     const p = gameState.players[gameState.myPlayerNum];
@@ -207,7 +212,6 @@ function handleInput(timeScale) {
     if (keys['ArrowLeft'] && gameState.fuel > 0) { p.x -= 2.5 * timeScale; gameState.fuel -= 1 * timeScale; stateChanged = true; }
     if (keys['ArrowRight'] && gameState.fuel > 0) { p.x += 2.5 * timeScale; gameState.fuel -= 1 * timeScale; stateChanged = true; }
     
-    // 맵 경계 제한 수정
     if (p.x < 30) p.x = 30; 
     if (p.x > MAP_WIDTH - 30) p.x = MAP_WIDTH - 30;
 
@@ -239,7 +243,7 @@ function handleInput(timeScale) {
     }
     
     document.getElementById('status').innerText = 
-        `ANGLE: ${Math.floor(gameState.angle)}° | POWER: ${Math.floor(gameState.power)} | FUEL: ${Math.floor(gameState.fuel)}`;
+        `ANGLE: ${Math.floor(gameState.angle)}° | POWER: ${Math.floor(gameState.power)} | FUEL: ${Math.floor(gameState.fuel)} | [A][D] 카메라 이동`;
 }
 
 function sendFireAction() {
@@ -260,6 +264,7 @@ function sendFireAction() {
     
     gameState.lastActionId = actionId;
     gameState.isProcessingHit = false; 
+    gameState.cameraMode = 'auto'; // 발사 시 카메라 자동 모드로 전환하여 포탄 추적
     update(roomRef, { action: actionData });
     executeFire(actionData);
 }
@@ -275,33 +280,27 @@ function updatePhysics(timeScale) {
     if (!gameState.projectile.active) return;
 
     const weaponInfo = WEAPONS[gameState.projectile.weapon];
-
     gameState.projectile.x += gameState.projectile.vx * timeScale;
     gameState.projectile.vy += weaponInfo.gravity * timeScale; 
     gameState.projectile.y += gameState.projectile.vy * timeScale;
 
     const px = Math.floor(gameState.projectile.x);
-    // 충돌 범위 기준을 MAP_WIDTH로 수정
     const hitGround = px >= 0 && px < MAP_WIDTH && gameState.projectile.y >= gameState.terrain[px];
     const outOfBounds = gameState.projectile.y > canvas.height + 100 || gameState.projectile.x < -100 || gameState.projectile.x > MAP_WIDTH + 100;
 
     if (hitGround || outOfBounds) {
         gameState.projectile.active = false;
-        
         if (gameState.projectile.owner === gameState.myPlayerNum && !gameState.isProcessingHit) {
             gameState.isProcessingHit = true; 
-            
             if (hitGround) {
                 checkHitAndSync(); 
                 applyCrater(gameState.projectile.x, weaponInfo.crater);
             }
-            
             const nextTurn = gameState.myPlayerNum === 1 ? 2 : 1;
             update(roomRef, { 
                 turn: nextTurn, action: null, terrain: gameState.terrain 
             }).then(() => { gameState.isProcessingHit = false; });
         }
-        
         gameState.fuel = 100;
         updateTurnUI();
     }
@@ -310,7 +309,6 @@ function updatePhysics(timeScale) {
 function applyCrater(craterX, radius) {
     const startX = Math.max(0, Math.floor(craterX - radius));
     const endX = Math.min(MAP_WIDTH - 1, Math.floor(craterX + radius));
-
     for (let x = startX; x <= endX; x++) {
         const dx = x - craterX;
         const distSq = radius * radius - dx * dx;
@@ -318,7 +316,6 @@ function applyCrater(craterX, radius) {
             const dy = Math.sqrt(distSq); 
             const surfaceY = gameState.terrain[x];
             const newY = Math.max(surfaceY, surfaceY + dy * 0.8);
-
             if (newY < canvas.height - 10) gameState.terrain[x] = newY;
         }
     }
@@ -328,35 +325,22 @@ function checkHitAndSync() {
     const weaponInfo = WEAPONS[gameState.projectile.weapon];
     let hpUpdates = {};
     let isGameOver = false;
-
     for (let i = 1; i <= 2; i++) {
         const tX = gameState.players[i].x;
         const tY = getTerrainInfo(tX).y;
         const dist = Math.hypot(gameState.projectile.x - tX, gameState.projectile.y - tY);
-        
         if (dist < weaponInfo.crater + 20) {
             let dmgApplied = weaponInfo.dmg;
-            if (i === gameState.projectile.owner) {
-                dmgApplied = Math.floor(dmgApplied * 0.5);
-            }
-            
+            if (i === gameState.projectile.owner) dmgApplied = Math.floor(dmgApplied * 0.5);
             const newHP = Math.max(0, gameState.players[i].hp - dmgApplied);
             hpUpdates[`hp${i}`] = newHP;
-            
-            if (newHP <= 0) {
-                isGameOver = true;
-            }
+            if (newHP <= 0) isGameOver = true;
         }
     }
-
     if (Object.keys(hpUpdates).length > 0) {
         update(roomRef, hpUpdates);
-
         if (isGameOver) {
-            setTimeout(() => {
-                alert("GAME OVER!");
-                location.reload();
-            }, 100);
+            setTimeout(() => { alert("GAME OVER!"); location.reload(); }, 100);
         }
     }
 }
@@ -368,65 +352,59 @@ function updateTurnUI() {
     el.style.color = isMyTurn ? "#f1c40f" : "#666";
 }
 
-// 카메라 추적 업데이트 함수
 function updateCamera() {
+    // 1. 수동 모드일 때는 카메라 위치를 맵 경계 내로만 제한
+    if (gameState.cameraMode === 'manual') {
+        gameState.cameraX = Math.max(0, Math.min(gameState.cameraX, MAP_WIDTH - canvas.width));
+        return;
+    }
+
+    // 2. 자동 모드일 때 (추적 로직)
     let targetX;
-    
     if (gameState.projectile.active) {
-        // 포탄이 날아가고 있으면 포탄을 추적
         targetX = gameState.projectile.x;
     } else {
-        // 평소엔 현재 턴인 플레이어를 추적
         targetX = gameState.players[gameState.turn].x;
     }
 
-    // 화면 중앙에 타겟이 오도록 목표 카메라 위치 계산
     let desiredCameraX = targetX - (canvas.width / 2);
-
-    // 카메라가 맵 바깥으로 나가지 않도록 제한
     desiredCameraX = Math.max(0, Math.min(desiredCameraX, MAP_WIDTH - canvas.width));
 
-    // 현재 위치에서 목표 위치로 부드럽게 이동 (Lerp)
+    // 부드러운 추적
     gameState.cameraX += (desiredCameraX - gameState.cameraX) * 0.1;
 }
 
 function draw() {
-    // 1. 캔버스 전체 지우기
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
-    // 2. 배경 그리기 (화면에 고정)
+    // 배경
     const bg = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
     bg.addColorStop(0, '#111'); bg.addColorStop(1, '#2c2c2a');
     ctx.fillStyle = bg; ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // 3. 카메라 적용 시작 (World Space)
     ctx.save();
     ctx.translate(-gameState.cameraX, 0);
 
-    // 지형 렌더링
+    // 지형
     ctx.fillStyle = '#7a6a4a'; 
     ctx.beginPath(); ctx.moveTo(0, canvas.height); 
     for (let x = 0; x < MAP_WIDTH; x++) { ctx.lineTo(x, gameState.terrain[x]); }
     ctx.lineTo(MAP_WIDTH, canvas.height); ctx.closePath(); ctx.fill();
     ctx.strokeStyle = '#554a3a'; ctx.lineWidth = 2; ctx.stroke();
 
-    // 플레이어 렌더링
+    // 플레이어
     for (let id in gameState.players) {
         const p = gameState.players[id];
         const tInfo = getTerrainInfo(p.x); 
         ctx.save();
         ctx.translate(p.x, tInfo.y - 12); 
-        
-        ctx.fillStyle = '#fff';
-        ctx.font = 'bold 12px sans-serif';
-        ctx.textAlign = 'center';
+        ctx.fillStyle = '#fff'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
         ctx.fillText(`HP: ${Math.floor(p.hp)}`, 0, -25);
         
         ctx.save();
         const currentAngle = (gameState.myPlayerNum == id) ? gameState.angle : (p.angle || 45);
         if (id == 1) ctx.rotate(-currentAngle * (Math.PI / 180)); 
         else ctx.rotate((-180 + currentAngle) * (Math.PI / 180)); 
-        
         ctx.fillStyle = p.color; ctx.fillRect(0, -3, 30, 6);
         ctx.restore();
 
@@ -437,14 +415,13 @@ function draw() {
         ctx.restore();
     }
 
-    // 궤적 예측선 렌더링
+    // 궤적 예측선
     if (gameState.turn === gameState.myPlayerNum && !gameState.projectile.active) {
         const currentWeaponInfo = WEAPONS[gameState.selectedWeapon];
         const radian = gameState.angle * (Math.PI / 180);
         const dir = gameState.myPlayerNum === 1 ? 1 : -1;
         const pX = gameState.players[gameState.myPlayerNum].x;
         const tInfo = getTerrainInfo(pX);
-
         const simPower = gameState.isCharging ? gameState.power : currentWeaponInfo.maxPower;
 
         let simX = pX;
@@ -452,104 +429,65 @@ function draw() {
         let simVx = Math.cos(radian) * (simPower * 0.25) * dir;
         let simVy = -Math.sin(radian) * (simPower * 0.25);
 
-        ctx.save();
-        ctx.beginPath();
-        ctx.moveTo(simX, simY);
-        
+        ctx.save(); ctx.beginPath(); ctx.moveTo(simX, simY);
         ctx.globalAlpha = gameState.isCharging ? 1.0 : 0.35;
-        ctx.strokeStyle = currentWeaponInfo.color; 
-        ctx.lineWidth = 2;
-        ctx.setLineDash([8, 12]);
+        ctx.strokeStyle = currentWeaponInfo.color; ctx.lineWidth = 2; ctx.setLineDash([8, 12]);
 
-        for (let i = 0; i < 200; i++) { // 예측선 길이 약간 증가
-            simX += simVx;
-            simVy += currentWeaponInfo.gravity;
-            simY += simVy;
+        for (let i = 0; i < 200; i++) {
+            simX += simVx; simVy += currentWeaponInfo.gravity; simY += simVy;
             ctx.lineTo(simX, simY);
-            
             const checkX = Math.floor(simX);
             if (checkX >= 0 && checkX < MAP_WIDTH && simY >= gameState.terrain[checkX]) break;
             if (simY > canvas.height) break;
         }
-        ctx.stroke();
-        ctx.restore();
+        ctx.stroke(); ctx.restore();
     }
 
-    // 포탄 렌더링
+    // 포탄
     if (gameState.projectile.active) {
         const projWeaponInfo = WEAPONS[gameState.projectile.weapon];
         ctx.fillStyle = projWeaponInfo.color;
         ctx.beginPath(); ctx.arc(gameState.projectile.x, gameState.projectile.y, 6, 0, Math.PI*2); ctx.fill();
     }
 
-    // 4. 카메라 적용 종료 (여기서부터는 Screen Space, 즉 화면에 고정되는 UI 요소들)
     ctx.restore();
 
-    // 무기 UI
+    // UI (Screen Space)
     ctx.save();
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-    ctx.fillRect(20, 20, 230, 130);
-    ctx.strokeStyle = '#555';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(20, 20, 230, 130);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)'; ctx.fillRect(20, 20, 230, 130);
+    ctx.strokeStyle = '#555'; ctx.lineWidth = 2; ctx.strokeRect(20, 20, 230, 130);
 
-    const keysArr = ['Q', 'W', 'E', 'R'];
-    keysArr.forEach((key, idx) => {
+    ['Q', 'W', 'E', 'R'].forEach((key, idx) => {
         const wInfo = WEAPONS[key];
         const isSelected = (gameState.selectedWeapon === key);
         const yPos = 45 + (idx * 28);
-
-        if (isSelected) {
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
-            ctx.fillRect(22, yPos - 16, 226, 26);
-        }
-
-        ctx.fillStyle = wInfo.color;
-        ctx.beginPath();
-        ctx.arc(40, yPos - 4, 6, 0, Math.PI * 2);
-        ctx.fill();
-        if (isSelected) {
-            ctx.strokeStyle = '#fff';
-            ctx.lineWidth = 1.5;
-            ctx.stroke();
-        }
-
-        ctx.fillStyle = isSelected ? '#ffffff' : '#aaaaaa';
-        ctx.font = isSelected ? 'bold 13px sans-serif' : '13px sans-serif';
-        ctx.textAlign = 'left';
-        ctx.fillText(`[${key}] ${wInfo.name}`, 55, yPos);
-        
-        ctx.font = '11px sans-serif';
-        ctx.fillStyle = isSelected ? '#dddddd' : '#777777';
-        ctx.fillText(`ATK:${wInfo.dmg} | 사거리:${wInfo.maxPower}`, 135, yPos);
+        if (isSelected) { ctx.fillStyle = 'rgba(255, 255, 255, 0.15)'; ctx.fillRect(22, yPos - 16, 226, 26); }
+        ctx.fillStyle = wInfo.color; ctx.beginPath(); ctx.arc(40, yPos - 4, 6, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = isSelected ? '#ffffff' : '#aaaaaa'; ctx.font = isSelected ? 'bold 13px sans-serif' : '13px sans-serif';
+        ctx.textAlign = 'left'; ctx.fillText(`[${key}] ${wInfo.name}`, 55, yPos);
     });
     ctx.restore();
 
-    // 파워 게이지 바
     if (gameState.isCharging && gameState.turn === gameState.myPlayerNum) {
         const currentWeaponInfo = WEAPONS[gameState.selectedWeapon];
         const barWidth = 300, barX = (canvas.width - 300) / 2;
         ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.fillRect(barX, 30, barWidth, 15);
-        const fillRatio = gameState.power / currentWeaponInfo.maxPower;
-        ctx.fillStyle = currentWeaponInfo.color; 
-        ctx.fillRect(barX, 30, fillRatio * barWidth, 15);
+        ctx.fillStyle = currentWeaponInfo.color; ctx.fillRect(barX, 30, (gameState.power / currentWeaponInfo.maxPower) * barWidth, 15);
     }
 }
 
 function gameLoop(timestamp) {
     if (!timestamp) timestamp = performance.now();
-    
     if (!lastTime) lastTime = timestamp;
     const dt = timestamp - lastTime;
     lastTime = timestamp;
-
     const safeDt = Math.min(dt, 50);
     const timeScale = safeDt / (1000 / 60);
 
     if (gameState.isGameStarted && gameState.terrain.length > 0) {
         handleInput(timeScale);
         updatePhysics(timeScale);
-        updateCamera(); // 카메라 이동 연산 추가
+        updateCamera();
         draw();
     }
     requestAnimationFrame(gameLoop);
