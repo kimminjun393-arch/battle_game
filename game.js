@@ -28,7 +28,6 @@ const ctx = canvas.getContext('2d');
 const MAX_HP = 300;
 const MAP_WIDTH = 3000; 
 
-// 무기 데이터
 const WEAPONS = {
     'Q': { name: 'NORMAL', dmg: 35, crater: 30, maxPower: 100, gravity: 0.22, color: '#f1c40f' },
     'W': { name: 'HEAVY', dmg: 55, crater: 50, maxPower: 75, gravity: 0.28, color: '#e74c3c' },
@@ -36,7 +35,6 @@ const WEAPONS = {
     'R': { name: 'NUKE', dmg: 80, crater: 80, maxPower: 55, gravity: 0.35, color: '#9b59b6' }
 };
 
-// 맵 테마 데이터 추가
 const MAP_THEMES = {
     'GRASSLAND': { 
         name: '초원', bgTop: '#87CEEB', bgBottom: '#E0F6FF', 
@@ -62,7 +60,7 @@ let gameState = {
     isCharging: false, isGameStarted: false,
     cameraX: 0,
     cameraMode: 'auto', 
-    theme: 'GRASSLAND', // 현재 방의 테마
+    theme: 'GRASSLAND',
     players: {
         1: { x: 300, hp: MAX_HP, color: '#3498db', angle: 45 },
         2: { x: MAP_WIDTH - 300, hp: MAX_HP, color: '#e74c3c', angle: 45 }
@@ -101,7 +99,6 @@ joinBtn.addEventListener('click', async () => {
         const data = snapshot.val();
 
         if (!data || data.playersCount === 0) {
-            // 방장: 테마 랜덤 뽑기
             const themeKeys = Object.keys(MAP_THEMES);
             const randomTheme = themeKeys[Math.floor(Math.random() * themeKeys.length)];
             
@@ -126,7 +123,6 @@ joinBtn.addEventListener('click', async () => {
             if (!val) return;
             
             if (val.theme) gameState.theme = val.theme;
-
             if (val.playersCount === 2 && !gameState.isGameStarted) startGame();
             
             if (val.turn !== undefined && val.turn !== gameState.turn) {
@@ -319,10 +315,10 @@ function updatePhysics(timeScale) {
             gameState.isProcessingHit = true; 
             if (hitGround) {
                 checkHitAndSync(); 
-                // 무기의 기본 파괴력에 지형의 강도를 곱해줍니다.
                 const currentTheme = MAP_THEMES[gameState.theme] || MAP_THEMES['GRASSLAND'];
                 const finalCraterRadius = weaponInfo.crater * currentTheme.hardness;
-                applyCrater(gameState.projectile.x, finalCraterRadius);
+                // 수정됨: 폭발 중심의 실제 Y좌표도 같이 넘겨줌
+                applyCrater(gameState.projectile.x, gameState.projectile.y, finalCraterRadius);
             }
             const nextTurn = gameState.myPlayerNum === 1 ? 2 : 1;
             update(roomRef, { 
@@ -334,17 +330,24 @@ function updatePhysics(timeScale) {
     }
 }
 
-function applyCrater(craterX, radius) {
+// 수정된 크레이터(지형 파괴) 로직
+function applyCrater(craterX, craterY, radius) {
     const startX = Math.max(0, Math.floor(craterX - radius));
     const endX = Math.min(MAP_WIDTH - 1, Math.floor(craterX + radius));
+    
     for (let x = startX; x <= endX; x++) {
         const dx = x - craterX;
         const distSq = radius * radius - dx * dx;
+        
         if (distSq > 0) {
+            // 원의 아래쪽 둥근 부분을 계산하여 그 부분까지만 지형을 파냅니다.
             const dy = Math.sqrt(distSq); 
-            const surfaceY = gameState.terrain[x];
-            const newY = Math.max(surfaceY, surfaceY + dy * 0.8);
-            if (newY < canvas.height - 10) gameState.terrain[x] = newY;
+            const bottomOfCrater = craterY + dy; 
+            
+            // 현재 지형의 높이가 파여야 할 깊이보다 덜 파였다면 확실히 깎아냄
+            if (gameState.terrain[x] < bottomOfCrater) {
+                gameState.terrain[x] = Math.min(bottomOfCrater, canvas.height - 10);
+            }
         }
     }
 }
@@ -353,7 +356,6 @@ function checkHitAndSync() {
     const weaponInfo = WEAPONS[gameState.projectile.weapon];
     let hpUpdates = {};
     let isGameOver = false;
-    // 데미지 계산 시에도 지형 파괴력 비례 등 추가 가능하나 지금은 기본 데미지 유지
     for (let i = 1; i <= 2; i++) {
         const tX = gameState.players[i].x;
         const tY = getTerrainInfo(tX).y;
@@ -406,7 +408,6 @@ function draw() {
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
-    // 테마별 배경색
     const bg = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
     bg.addColorStop(0, currentTheme.bgTop); bg.addColorStop(1, currentTheme.bgBottom);
     ctx.fillStyle = bg; ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -414,14 +415,12 @@ function draw() {
     ctx.save();
     ctx.translate(-gameState.cameraX, 0);
 
-    // 테마별 지형색
     ctx.fillStyle = currentTheme.terrainFill; 
     ctx.beginPath(); ctx.moveTo(0, canvas.height); 
     for (let x = 0; x < MAP_WIDTH; x++) { ctx.lineTo(x, gameState.terrain[x]); }
     ctx.lineTo(MAP_WIDTH, canvas.height); ctx.closePath(); ctx.fill();
     ctx.strokeStyle = currentTheme.terrainStroke; ctx.lineWidth = 2; ctx.stroke();
 
-    // 플레이어
     for (let id in gameState.players) {
         const p = gameState.players[id];
         const tInfo = getTerrainInfo(p.x); 
@@ -429,7 +428,6 @@ function draw() {
         ctx.translate(p.x, tInfo.y - 12); 
         ctx.fillStyle = '#fff'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
         
-        // 텍스트 가독성을 위해 테두리 추가
         ctx.strokeStyle = '#000'; ctx.lineWidth = 3;
         ctx.strokeText(`HP: ${Math.floor(p.hp)}`, 0, -25);
         ctx.fillText(`HP: ${Math.floor(p.hp)}`, 0, -25);
@@ -448,7 +446,6 @@ function draw() {
         ctx.restore();
     }
 
-    // 궤적 예측선
     if (gameState.turn === gameState.myPlayerNum && !gameState.projectile.active) {
         const currentWeaponInfo = WEAPONS[gameState.selectedWeapon];
         const radian = gameState.angle * (Math.PI / 180);
@@ -476,7 +473,6 @@ function draw() {
         ctx.stroke(); ctx.restore();
     }
 
-    // 포탄
     if (gameState.projectile.active) {
         const projWeaponInfo = WEAPONS[gameState.projectile.weapon];
         ctx.fillStyle = projWeaponInfo.color;
@@ -484,10 +480,7 @@ function draw() {
     }
 
     ctx.restore();
-
-    // UI (Screen Space)
     
-    // 테마 이름 표시 UI
     ctx.save();
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
     ctx.fillRect(canvas.width - 150, 20, 130, 35);
