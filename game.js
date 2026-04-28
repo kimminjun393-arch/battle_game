@@ -35,30 +35,30 @@ const WEAPONS = {
     'R': { name: 'NUKE', dmg: 80, crater: 80, maxPower: 55, gravity: 0.35, color: '#9b59b6' }
 };
 
-// 맵 테마 내에 여러 재질(mats) 추가
+// 재질별 강도(hardness) 극단적 상향/하향 적용
 const MAP_THEMES = {
     'GRASSLAND': { 
         name: '초원', bgTop: '#87CEEB', bgBottom: '#E0F6FF',
         mats: {
             'DIRT': { fill: '#2ecc71', stroke: '#27ae60', hardness: 1.0 },
-            'ROCK': { fill: '#7f8c8d', stroke: '#636e72', hardness: 0.5 },
-            'SAND': { fill: '#f1c40f', stroke: '#e67e22', hardness: 1.5 }
+            'ROCK': { fill: '#7f8c8d', stroke: '#636e72', hardness: 0.2 },
+            'SAND': { fill: '#f1c40f', stroke: '#e67e22', hardness: 2.5 }
         }
     },
     'DESERT': { 
         name: '사막', bgTop: '#FFDAB9', bgBottom: '#FFA07A',
         mats: {
             'DIRT': { fill: '#e67e22', stroke: '#d35400', hardness: 1.1 },
-            'ROCK': { fill: '#c0392b', stroke: '#922b21', hardness: 0.6 },
-            'SAND': { fill: '#f39c12', stroke: '#e67e22', hardness: 1.6 }
+            'ROCK': { fill: '#c0392b', stroke: '#922b21', hardness: 0.25 },
+            'SAND': { fill: '#f39c12', stroke: '#e67e22', hardness: 2.8 }
         }
     },
     'BATTLEFIELD': { 
         name: '전쟁터', bgTop: '#4a4a4a', bgBottom: '#2c2c2a',
         mats: {
             'DIRT': { fill: '#555555', stroke: '#333333', hardness: 0.8 },
-            'ROCK': { fill: '#2d3436', stroke: '#1e272e', hardness: 0.4 },
-            'SAND': { fill: '#718093', stroke: '#2f3640', hardness: 1.2 }
+            'ROCK': { fill: '#2d3436', stroke: '#1e272e', hardness: 0.15 },
+            'SAND': { fill: '#718093', stroke: '#2f3640', hardness: 2.2 }
         }
     }
 };
@@ -75,7 +75,7 @@ let gameState = {
     cameraMode: 'auto', 
     theme: 'GRASSLAND',
     terrain: [],
-    chunks: [], // 구역별 재질 데이터를 담는 배열
+    chunks: [], 
     players: {
         1: { x: 300, hp: MAX_HP, color: '#3498db', angle: 45 },
         2: { x: MAP_WIDTH - 300, hp: MAX_HP, color: '#e74c3c', angle: 45 }
@@ -89,7 +89,6 @@ const keys = {};
 let lastMoveSync = 0;
 let lastTime = 0;
 
-// 지형 높이와 구역(재질)을 함께 생성하는 함수
 function generateMapData() {
     let t = [];
     let base = 350, freq1 = 0.004, amp1 = 60, freq2 = 0.015, amp2 = 25;
@@ -104,11 +103,10 @@ function generateMapData() {
     const types = ['DIRT', 'ROCK', 'SAND'];
     
     while (x < MAP_WIDTH) {
-        let width = 400 + Math.random() * 600; // 400 ~ 1000px 단위로 구역 나눔
+        let width = 400 + Math.random() * 600; 
         let end = Math.min(x + width, MAP_WIDTH);
         let matType = types[Math.floor(Math.random() * types.length)];
         
-        // 바로 직전과 같은 재질이 나오지 않도록 방지
         if (chunks.length > 0 && chunks[chunks.length - 1].mat === matType) {
             matType = types[(types.indexOf(matType) + 1) % types.length];
         }
@@ -357,7 +355,6 @@ function updatePhysics(timeScale) {
             if (hitGround) {
                 checkHitAndSync(); 
                 
-                // 포탄이 떨어진 x좌표가 속한 구역(chunk)을 찾아 해당 재질의 강도 적용
                 const currentTheme = MAP_THEMES[gameState.theme] || MAP_THEMES['GRASSLAND'];
                 const hitChunk = gameState.chunks.find(c => px >= c.start && px < c.end) || gameState.chunks[0];
                 const matInfo = currentTheme.mats[hitChunk.mat];
@@ -401,7 +398,6 @@ function checkHitAndSync() {
         const tY = getTerrainInfo(tX).y;
         const dist = Math.hypot(gameState.projectile.x - tX, gameState.projectile.y - tY);
         
-        // 피격 판정 범위도 타격 지점의 지형 강도에 따라 약간의 보정을 받음
         const currentTheme = MAP_THEMES[gameState.theme] || MAP_THEMES['GRASSLAND'];
         const hitChunk = gameState.chunks.find(c => tX >= c.start && tX < c.end) || gameState.chunks[0];
         const matInfo = currentTheme.mats[hitChunk.mat];
@@ -451,7 +447,6 @@ function draw() {
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
-    // 배경
     const bg = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
     bg.addColorStop(0, currentTheme.bgTop); bg.addColorStop(1, currentTheme.bgBottom);
     ctx.fillStyle = bg; ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -459,15 +454,12 @@ function draw() {
     ctx.save();
     ctx.translate(-gameState.cameraX, 0);
 
-    // 구역별(chunks)로 쪼개서 지형 그리기
     gameState.chunks.forEach(chunk => {
         const mat = currentTheme.mats[chunk.mat];
         let sX = chunk.start;
-        // 구역 사이에 미세한 틈새가 보이는 것을 방지하기 위해 그리기 시작점을 1px 왼쪽으로 당김
         let renderStartX = sX > 0 ? sX - 1 : sX; 
         let eX = Math.min(chunk.end, MAP_WIDTH - 1);
 
-        // 구역 내부 채우기
         ctx.fillStyle = mat.fill;
         ctx.beginPath();
         ctx.moveTo(renderStartX, canvas.height);
@@ -478,7 +470,6 @@ function draw() {
         ctx.closePath();
         ctx.fill();
 
-        // 윗부분 윤곽선 그리기
         ctx.strokeStyle = mat.stroke;
         ctx.lineWidth = 2;
         ctx.beginPath();
